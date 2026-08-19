@@ -1,4 +1,8 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
+import {
+  IS_LIVE, getSession, consumeRedirect, signInWithGoogle, sendEmailLink, signOut,
+  getProfile, saveProfile, listEnquiries, createEnquiry,
+} from "./lib/backend";
 
 /* ============================================================
    BookMyBand — working demo, no model in the loop.
@@ -122,6 +126,37 @@ const CSS = `
 .bmb-tab[aria-selected="true"] { color: ${C.ink}; border-bottom-color: ${C.field}; font-weight: 700; }
 
 .bmb-note { font-size: 13px; line-height: 1.55; color: ${C.inkSoft}; }
+
+.bmb-scrim {
+  position: fixed; inset: 0; z-index: 20; background: rgba(45, 5, 7, 0.55);
+  display: flex; align-items: flex-end; justify-content: center;
+}
+@media (min-width: 560px) { .bmb-scrim { align-items: center; } }
+.bmb-sheet {
+  width: 100%; max-width: 420px; background: ${C.paper}; border-top: 3px solid ${C.gold};
+  padding: 22px 20px 26px; border-radius: 4px 4px 0 0;
+  animation: bmbSheet 260ms cubic-bezier(.2,.8,.3,1) both;
+}
+@media (min-width: 560px) { .bmb-sheet { border-radius: 4px; margin: 20px; } }
+@keyframes bmbSheet { from { opacity: 0; transform: translateY(24px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .bmb-sheet { animation: none; } }
+
+.bmb-phone { display: flex; align-items: stretch; }
+.bmb-phone span {
+  display: flex; align-items: center; padding: 0 11px; font-family: ${FONT_DATA}; font-size: 15px;
+  background: ${C.paperDeep}; border: 1px solid ${C.rule}; border-right: none; color: ${C.inkSoft};
+}
+.bmb-otp { letter-spacing: 0.5em; font-size: 20px; text-align: center; }
+.bmb-error { font-size: 13px; color: ${C.crimson}; margin: 9px 0 0; line-height: 1.5; }
+.bmb-demo {
+  font-family: ${FONT_DATA}; font-size: 11.5px; line-height: 1.5; color: ${C.inkSoft};
+  border: 1px dashed ${C.rule}; padding: 9px 11px; margin-top: 14px;
+}
+.bmb-avatar {
+  width: 30px; height: 30px; border-radius: 50%; border: 1px solid ${C.gold}; background: ${C.paperDeep};
+  font-family: ${FONT_DISPLAY}; font-size: 14px; color: ${C.ink}; cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+}
 .bmb-rise { animation: bmbRise 340ms cubic-bezier(.2,.8,.3,1) both; }
 @keyframes bmbRise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: none; } }
 @media (prefers-reduced-motion: reduce) { .bmb-rise { animation: none; } }
@@ -502,6 +537,172 @@ function Boot({ onDone }) {
   );
 }
 
+/* ---------- auth ----------
+   Identity comes from Supabase (Google OAuth, or a passwordless email
+   link). The phone number is a profile field, not a credential: bands
+   need a number to ring, but verifying it by SMS costs money per login
+   and requires TRAI DLT registration in India. Wrong trade for a
+   once-in-a-lifetime purchase.
+*/
+
+const validPhone = (p) => /^[6-9]\d{9}$/.test(p);
+
+function Auth({ reason, onClose, onSignedIn }) {
+  const [step, setStep] = useState("choose"); // choose | email-sent | busy
+  const [email, setEmail] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const google = async () => {
+    setBusy(true); setErr("");
+    try {
+      const r = await signInWithGoogle();
+      if (r?.mocked) onSignedIn();           // no keys: straight through
+    } catch (e) {
+      setErr(e.message || "Google sign-in did not start. Try the email link instead.");
+      setBusy(false);
+    }
+  };
+
+  const emailLink = async () => {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) {
+      setErr("That address is missing something — check for a typo before we send the link.");
+      return;
+    }
+    setBusy(true); setErr("");
+    try {
+      const r = await sendEmailLink(email);
+      if (r?.mocked) { onSignedIn(); return; }
+      setStep("email-sent");
+    } catch (e) {
+      setErr(e.message || "The link could not be sent. Check the address, or use Google instead.");
+    }
+    setBusy(false);
+  };
+
+  return (
+    <div className="bmb-scrim" onClick={onClose}>
+      <div className="bmb-sheet" role="dialog" aria-modal="true" aria-label="Sign in" onClick={(e) => e.stopPropagation()}>
+        {step === "choose" && (
+          <>
+            <h2 className="bmb-h2" style={{ margin: "0 0 6px" }}>Sign in to send this</h2>
+            <p className="bmb-note" style={{ marginBottom: 18 }}>
+              {reason || "One account, whether you have been here before or not. No password to remember."}
+            </p>
+
+            <button className="bmb-btn bmb-btn--ghost" onClick={google} disabled={busy}
+              style={{ marginBottom: 16, fontWeight: 600 }}>
+              <svg width="17" height="17" viewBox="0 0 18 18" aria-hidden="true">
+                <path fill="#4285F4" d="M17.6 9.2c0-.6-.1-1.2-.2-1.8H9v3.4h4.8a4.1 4.1 0 0 1-1.8 2.7v2.2h2.9c1.7-1.5 2.7-3.8 2.7-6.5z" />
+                <path fill="#34A853" d="M9 18c2.4 0 4.5-.8 6-2.2l-2.9-2.2c-.8.5-1.8.9-3.1.9-2.4 0-4.4-1.6-5.1-3.8H1v2.3A9 9 0 0 0 9 18z" />
+                <path fill="#FBBC05" d="M3.9 10.7a5.4 5.4 0 0 1 0-3.4V5H1a9 9 0 0 0 0 8l2.9-2.3z" />
+                <path fill="#EA4335" d="M9 3.6c1.3 0 2.5.5 3.4 1.3l2.6-2.6A9 9 0 0 0 1 5l2.9 2.3C4.6 5.1 6.6 3.6 9 3.6z" />
+              </svg>
+              Continue with Google
+            </button>
+
+            <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "0 0 16px" }}>
+              <div style={{ flex: 1, height: 1, background: C.rule }} />
+              <span className="bmb-eyebrow">or</span>
+              <div style={{ flex: 1, height: 1, background: C.rule }} />
+            </div>
+
+            <label className="bmb-label" htmlFor="bmb-email">Email</label>
+            <input id="bmb-email" className="bmb-input" type="email" autoComplete="email"
+              value={email} placeholder="you@example.in"
+              onChange={(e) => { setEmail(e.target.value); setErr(""); }}
+              onKeyDown={(e) => e.key === "Enter" && emailLink()} />
+            {err && <p className="bmb-error">{err}</p>}
+            <div style={{ marginTop: 14 }}>
+              <button className="bmb-btn" onClick={emailLink} disabled={busy}>
+                {busy ? "Working…" : "Email me a sign-in link"}
+              </button>
+            </div>
+
+            {!IS_LIVE && (
+              <div className="bmb-demo">
+                No Supabase keys found, so this is running against the in-memory store. Either button signs you
+                straight in. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to use the real thing.
+              </div>
+            )}
+          </>
+        )}
+
+        {step === "email-sent" && (
+          <>
+            <h2 className="bmb-h2" style={{ margin: "0 0 6px" }}>Check {email}</h2>
+            <p className="bmb-note">
+              The link signs you in and brings you back to this page. It works once and expires in an hour.
+              Nothing was sent to your number and no password was created.
+            </p>
+            <div style={{ marginTop: 18 }}>
+              <button className="bmb-btn bmb-btn--ghost" onClick={() => setStep("choose")}>Use a different address</button>
+            </div>
+          </>
+        )}
+
+        <div style={{ marginTop: 16, textAlign: "center" }}>
+          <button className="bmb-link" onClick={onClose}>Keep browsing without an account</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* Collected after identity is established, because a band cannot reply
+   to an email address at 11pm the night before a wedding. */
+function PhoneStep({ session, onSaved, onSkip }) {
+  const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const save = async () => {
+    if (name.trim().length < 2) { setErr("Bands need a name to put on the enquiry."); return; }
+    if (!validPhone(phone)) { setErr("Enter a 10-digit Indian mobile, without +91 or spaces."); return; }
+    setBusy(true); setErr("");
+    try {
+      const p = await saveProfile(session.userId, { name: name.trim(), phone, email: session.email });
+      onSaved(p);
+    } catch (e) {
+      setErr(e.message || "That did not save. Try again in a moment.");
+      setBusy(false);
+    }
+  };
+
+  return (
+    <div className="bmb-scrim">
+      <div className="bmb-sheet" role="dialog" aria-modal="true" aria-label="Your details">
+        <div className="bmb-eyebrow">Last step</div>
+        <h2 className="bmb-h2" style={{ margin: "8px 0 6px" }}>How should the band reach you?</h2>
+        <p className="bmb-note" style={{ marginBottom: 18 }}>
+          Your name and number go on the enquiry. Nothing else — no email list, and your number is never shown
+          publicly on the site.
+        </p>
+        <label className="bmb-label" htmlFor="bmb-pname">Your name</label>
+        <input id="bmb-pname" className="bmb-input" value={name} placeholder="Aarav Mehta"
+          style={{ marginBottom: 14 }}
+          onChange={(e) => { setName(e.target.value); setErr(""); }} />
+        <label className="bmb-label" htmlFor="bmb-pphone">Mobile number</label>
+        <div className="bmb-phone">
+          <span>+91</span>
+          <input id="bmb-pphone" className="bmb-input" style={{ borderRadius: "0 2px 2px 0" }}
+            type="tel" inputMode="numeric" maxLength={10} value={phone} placeholder="98110 12345"
+            onChange={(e) => { setPhone(e.target.value.replace(/\D/g, "")); setErr(""); }}
+            onKeyDown={(e) => e.key === "Enter" && save()} />
+        </div>
+        {err && <p className="bmb-error">{err}</p>}
+        <div style={{ marginTop: 18 }}>
+          <button className="bmb-btn" onClick={save} disabled={busy}>{busy ? "Saving…" : "Save and continue"}</button>
+        </div>
+        <div style={{ marginTop: 14, textAlign: "center" }}>
+          <button className="bmb-link" onClick={onSkip}>Not now</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 /* ---------- screens ---------- */
 
 const CITIES = ["All cities", "Delhi NCR", "Jaipur", "Mumbai", "Chandigarh", "Lucknow"];
@@ -588,11 +789,11 @@ function Results({ date, city, onOpen, onBack }) {
   );
 }
 
-function Band({ band, date, onBack }) {
+function Band({ band, date, onBack, user, enquiries, onEnquire, onNeedAuth }) {
   const a = assess(band);
   const [tab, setTab] = useState("signal");
-  const [sent, setSent] = useState(false);
   const free = isFree(band, date);
+  const sent = (enquiries || []).some((e) => e.band_id === band.id && e.event_date === date);
 
   const evidence = [...a.flags, ...a.negative.filter((r) => !r.flag), ...a.specific];
 
@@ -718,15 +919,73 @@ function Band({ band, date, onBack }) {
           <div className="bmb-panel" style={{ marginBottom: 0 }}>
             <div style={{ fontFamily: FONT_DISPLAY, fontSize: 18 }}>Enquiry sent for {prettyDate(date)}</div>
             <p className="bmb-note" style={{ margin: "6px 0 0" }}>
-              They have your date and the price breakdown you saw. Nothing is paid and nothing is held yet.
+              {band.name} has your name, your number and the price breakdown you saw. Nothing is paid and nothing is held yet.
             </p>
           </div>
         ) : (
-          <button className={"bmb-btn" + (free ? "" : " bmb-btn--ghost")} disabled={!free} onClick={() => setSent(true)}
-            style={!free ? { cursor: "not-allowed", opacity: 0.55 } : undefined}>
-            {free ? `Enquire about ${prettyDate(date)}` : "Not free on this date"}
-          </button>
+          <>
+            <button className={"bmb-btn" + (free ? "" : " bmb-btn--ghost")} disabled={!free}
+              onClick={() => (user ? onEnquire(band.id) : onNeedAuth(band.id))}
+              style={!free ? { cursor: "not-allowed", opacity: 0.55 } : undefined}>
+              {free ? `Enquire about ${prettyDate(date)}` : "Not free on this date"}
+            </button>
+            {free && (
+              <p className="bmb-note" style={{ margin: "10px 0 0", textAlign: "center" }}>
+                {user
+                  ? `Sending as ${user.name}, +91 ${user.phone}`
+                  : "Takes a mobile number and a one-time code. No account needed to browse."}
+              </p>
+            )}
+          </>
         )}
+      </div>
+    </div>
+  );
+}
+
+function Account({ user, enquiries, onBack, onOpen, onSignOut }) {
+  const ago = (iso) => {
+    const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+    if (days <= 0) return "today";
+    if (days === 1) return "yesterday";
+    if (days < 14) return `${days} days ago`;
+    return `${Math.floor(days / 7)} weeks ago`;
+  };
+
+  return (
+    <div className="bmb-rise">
+      <button className="bmb-link" onClick={onBack} style={{ marginBottom: 14 }}>← Back to bands</button>
+      <div className="bmb-eyebrow">{user.phone ? `+91 ${user.phone}` : user.email}</div>
+      <h1 className="bmb-h1" style={{ fontSize: 25 }}>{user.name}</h1>
+
+      <div className="bmb-eyebrow" style={{ margin: "18px 0 10px" }}>Your enquiries</div>
+      {enquiries.length === 0 ? (
+        <div className="bmb-panel">
+          <p className="bmb-note" style={{ margin: 0 }}>
+            Nothing sent yet. Enquiries you send will sit here with the date and the total you were quoted at the
+            time, so you have a record if a price changes later.
+          </p>
+        </div>
+      ) : (
+        enquiries.map((e) => {
+          const b = SEED.find((x) => x.id === e.band_id);
+          return (
+            <button key={e.id} className="bmb-card" onClick={() => onOpen(e.band_id)}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "baseline" }}>
+                <h2 className="bmb-h2">{b ? b.name : e.band_id}</h2>
+                <span className="bmb-meta">{ago(e.created_at)}</span>
+              </div>
+              <div className="bmb-meta" style={{ marginTop: 5 }}>
+                Enquired for {prettyDate(e.event_date)}
+                {e.quoted_total ? ` · quoted ${inr(e.quoted_total)}` : ""}
+              </div>
+            </button>
+          );
+        })
+      )}
+
+      <div style={{ marginTop: 24 }}>
+        <button className="bmb-btn bmb-btn--ghost" onClick={onSignOut}>Sign out</button>
       </div>
     </div>
   );
@@ -734,13 +993,70 @@ function Band({ band, date, onBack }) {
 
 /* ---------- app ---------- */
 
-export default function App() {
+export default function BookMyBand() {
   const [screen, setScreen] = useState("boot");
   const [date, setDate] = useState("2026-11-21");
   const [city, setCity] = useState("Delhi NCR");
   const [openId, setOpenId] = useState(null);
 
+  const [session, setSession] = useState(null);   // { userId, email }
+  const [profile, setProfile] = useState(null);   // { name, phone }
+  const [enquiries, setEnquiries] = useState([]);
+  const [needPhone, setNeedPhone] = useState(false);
+  const [auth, setAuth] = useState(null);         // null | { reason, pendingBandId }
+  const pending = useRef(null);
+
   const band = SEED.find((b) => b.id === openId);
+  const user = session && profile ? { ...profile, email: session.email } : null;
+
+  /* Pick up an OAuth or email-link return, then load whatever session exists. */
+  useEffect(() => {
+    let live = true;
+    (async () => {
+      const s = (await consumeRedirect()) || (await getSession());
+      if (!live || !s) return;
+      setSession(s);
+      const [p, es] = await Promise.all([getProfile(s.userId), listEnquiries(s.userId)]);
+      if (!live) return;
+      setEnquiries(es || []);
+      if (p) setProfile(p); else setNeedPhone(true);
+    })();
+    return () => { live = false; };
+  }, []);
+
+  const loadAfterSignIn = async () => {
+    const s = await getSession();
+    if (!s) return;
+    setSession(s);
+    const [p, es] = await Promise.all([getProfile(s.userId), listEnquiries(s.userId)]);
+    setEnquiries(es || []);
+    if (p) { setProfile(p); await flushPending(s.userId); }
+    else setNeedPhone(true);
+  };
+
+  const quotedTotal = (b) =>
+    b.price.performance +
+    (typeof b.price.sound === "number" ? b.price.sound : 0) +
+    (typeof b.price.travelCity === "number" ? b.price.travelCity : 0);
+
+  const send = async (userId, bandId) => {
+    const b = SEED.find((x) => x.id === bandId);
+    const row = await createEnquiry(userId, { bandId, date, quotedTotal: quotedTotal(b) });
+    setEnquiries((prev) => [row, ...prev.filter((e) => e.id !== row.id)]);
+  };
+
+  const flushPending = async (userId) => {
+    const bandId = pending.current;
+    pending.current = null;
+    if (bandId) await send(userId, bandId);
+  };
+
+  const onSignedIn = () => { setAuth(null); loadAfterSignIn(); };
+
+  const doSignOut = async () => {
+    await signOut();
+    setSession(null); setProfile(null); setEnquiries([]); setScreen("search");
+  };
 
   return (
     <div className="bmb">
@@ -749,8 +1065,18 @@ export default function App() {
       {screen !== "boot" && (
         <div className="bmb-wrap">
           <div className="bmb-topbar">
-            <div className="bmb-logo">Book<em>My</em>Band</div>
-            <div className="bmb-eyebrow">Demo · seed data</div>
+            <button className="bmb-logo" onClick={() => setScreen("search")}
+              style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "inherit" }}>
+              Book<em>My</em>Band
+            </button>
+            {user ? (
+              <button className="bmb-avatar" onClick={() => setScreen("account")}
+                title={`${user.name} — your account`} aria-label={`${user.name}, your account`}>
+                {user.name.charAt(0).toUpperCase()}
+              </button>
+            ) : (
+              <button className="bmb-link" onClick={() => setAuth({ reason: null })}>Sign in</button>
+            )}
           </div>
           <div style={{ paddingTop: 22 }}>
             {screen === "search" && (
@@ -761,10 +1087,27 @@ export default function App() {
                 onOpen={(id) => { setOpenId(id); setScreen("band"); }} />
             )}
             {screen === "band" && band && (
-              <Band band={band} date={date} onBack={() => setScreen("results")} />
+              <Band band={band} date={date} user={user} enquiries={enquiries}
+                onBack={() => setScreen("results")}
+                onEnquire={(id) => send(session.userId, id)}
+                onNeedAuth={(id) => {
+                  pending.current = id;
+                  setAuth({ reason: `${band.name} needs a way to reply about ${prettyDate(date)}.` });
+                }} />
+            )}
+            {screen === "account" && user && (
+              <Account user={user} enquiries={enquiries} onBack={() => setScreen("results")}
+                onOpen={(id) => { setOpenId(id); setScreen("band"); }}
+                onSignOut={doSignOut} />
             )}
           </div>
         </div>
+      )}
+      {auth && <Auth reason={auth.reason} onClose={() => { pending.current = null; setAuth(null); }} onSignedIn={onSignedIn} />}
+      {needPhone && session && (
+        <PhoneStep session={session}
+          onSaved={async (p) => { setProfile(p); setNeedPhone(false); await flushPending(session.userId); }}
+          onSkip={() => { pending.current = null; setNeedPhone(false); }} />
       )}
     </div>
   );

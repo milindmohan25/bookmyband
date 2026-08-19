@@ -51,7 +51,8 @@ Evidence volume gates which tier is even reachable. A band cannot earn a positiv
 
 - Frontend: React (Vite)
 - AI: Anthropic API (Claude), single structured call per band — not yet wired in; the demo computes the same tiers with a pure deterministic function over hand-tagged seed data
-- Data: local JSON seed set (no DB — 20-30 bands doesn't need one)
+- Auth/data: Supabase (Google OAuth + passwordless email, Postgres with row-level security) for profiles and enquiries; falls back to an in-memory store with no keys set — see [AUTH.md](./AUTH.md)
+- Bands, prices and reviews: local JSON seed set (authored content, not user writes — no DB needed for these)
 - Hosting: static deploy
 
 ## Running locally
@@ -63,13 +64,21 @@ npm run build     # production build to dist/
 npm run preview   # preview the production build
 ```
 
+No Supabase keys are required to run the app — sign-in and enquiries work against an in-memory mock automatically. To use a real Supabase project instead, copy `.env.example` to `.env.local` and follow [AUTH.md](./AUTH.md).
+
 ## Repo layout
 
 ```
 index.html
+.env.example
+AUTH.md             # Supabase setup, and why phone OTP was rejected
+supabase/
+  schema.sql        # profiles + enquiries tables, RLS policies
 src/
   main.jsx          # entry point
-  App.jsx           # BookMyBand demo: search, results, band detail, reliability tiers
+  App.jsx           # BookMyBand app: search, results, band detail, reliability tiers, auth
+  lib/
+    backend.js      # Supabase client over plain fetch, with an in-memory fallback
   components/
     BootLogo.jsx    # animated splash screen (standalone design exploration)
 ```
