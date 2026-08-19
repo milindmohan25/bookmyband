@@ -54,14 +54,14 @@ The search page opens with a plain-language box: *"brass band for a baraat in De
 
 **Retrieval** runs in the browser over the seed set (`src/lib/retrieve.js`). No vector store and no embedding call: eight bands with hand-tagged reviews is a scoring problem, not a search-infrastructure problem, and keeping it local means retrieval cannot leak, cost anything, or fail. It reads city, style, budget (including "1 lakh" and "80k"), size and reliability intent, then emits a compact fact sheet per band — prices, terms, tier, and the reviews that carry reliability evidence.
 
-**Generation** is a single structured Claude call (`claude-opus-5`) over those fact sheets only, so the model cannot invent a band, a price or a review. The abstention rules from the tier table are enforced in the system prompt and again in code: a flagged band is reported every time it is mentioned, "Limited Info" is never softened into "seems fine", and band ids the model returns are filtered against what was actually retrieved. A question that matches nothing is answered without calling the model at all.
+**Generation** is a single structured call over those fact sheets only, so the model cannot invent a band, a price or a review. Either provider works, picked by whichever key the function finds — `GROQ_API_KEY` (Groq's OpenAI-compatible `chat/completions`) or `ANTHROPIC_API_KEY` (Claude). Same prompt, same JSON contract, same guarantees. The abstention rules from the tier table are enforced in the system prompt and again in code: a flagged band is reported every time it is mentioned, "Limited Info" is never softened into "seems fine", and band ids the model returns are filtered against what was actually retrieved. A question that matches nothing is answered without calling the model at all.
 
 **The key never reaches the browser.** A static site cannot hold a secret, so the call lives in `netlify/functions/ask.js` and the client sends only a question — never context, so a crafted request cannot feed the model invented facts. With no endpoint configured the same retrieved facts are read out by a deterministic local answerer, and the UI says so on screen rather than passing it off as a model.
 
 ## Stack
 
 - Frontend: React (Vite)
-- AI: Anthropic API (Claude Opus 5), one structured call per question, retrieval-grounded — see above
+- AI: Groq or the Anthropic API, one structured call per question, retrieval-grounded — see above
 - Auth/data: Supabase (Google OAuth + passwordless email, Postgres with row-level security) for profiles and enquiries; falls back to an in-memory store with no keys set — see [AUTH.md](./AUTH.md)
 - Bands, prices and reviews: local JSON seed set (authored content, not user writes — no DB needed for these)
 - Hosting: static deploy
