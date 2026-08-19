@@ -545,23 +545,39 @@ function Ask({ date, onOpenBand, onClose }) {
   const [busy, setBusy] = useState(false);
   const [res, setRes] = useState(null);
   const [err, setErr] = useState("");
+  // What the user has pinned down by answering follow-up questions.
+  const [facets, setFacets] = useState([]);
+  const [asked, setAsked] = useState([]);
   const inputRef = useRef(null);
 
   useEffect(() => { inputRef.current?.focus(); }, []);
 
-  const run = async (text) => {
+  const run = async (text, next = { facets, asked }) => {
     const question = (text ?? q).trim();
     if (!question || busy) return;
     setQ(question); setBusy(true); setErr(""); setRes(null);
     try {
-      setRes(await ask(question, { date }));
+      setRes(await ask(question, { date, facets: next.facets, asked: next.asked }));
     } catch (e) {
       setErr(e.message || "That did not come back. Try again in a moment.");
     }
     setBusy(false);
   };
 
-  const cited = res ? res.bandIds.map((id) => SEED.find((b) => b.id === id)).filter(Boolean) : [];
+  // Start over from the typed question, dropping anything pinned.
+  const fresh = (text) => { setFacets([]); setAsked([]); run(text, { facets: [], asked: [] }); };
+
+  // Answer the follow-up: fold it in and immediately try again.
+  const answerClarify = (key, option) => {
+    const nextFacets = [...facets, option];
+    const nextAsked = [...asked, key];
+    setFacets(nextFacets); setAsked(nextAsked);
+    run(q, { facets: nextFacets, asked: nextAsked });
+  };
+
+  // A follow-up question carries no bandIds — guard, or this throws
+  // before the render even reaches the clarify branch.
+  const cited = (res?.bandIds || []).map((id) => SEED.find((b) => b.id === id)).filter(Boolean);
 
   return (
     <div className="bmb-ask-box">
@@ -584,11 +600,19 @@ function Ask({ date, onOpenBand, onClose }) {
 
       <div style={{ display: "flex", flexWrap: "wrap", gap: 7, margin: "11px 0 13px" }}>
         {EXAMPLES.map((x) => (
-          <button key={x} className="bmb-chip" onClick={() => run(x)} disabled={busy}>{x}</button>
+          <button key={x} className="bmb-chip" onClick={() => fresh(x)} disabled={busy}>{x}</button>
         ))}
       </div>
 
-      <button className="bmb-btn" onClick={() => run()} disabled={busy || !q.trim()}
+      {facets.length > 0 && (
+        <div className="bmb-meta" style={{ marginBottom: 11 }}>
+          Also using: {facets.join(" · ")}
+          <button className="bmb-link" style={{ fontSize: 12.5, marginLeft: 9 }}
+            onClick={() => fresh(q)}>clear</button>
+        </div>
+      )}
+
+      <button className="bmb-btn" onClick={() => fresh(q)} disabled={busy || !q.trim()}
         style={busy || !q.trim() ? { opacity: 0.55, cursor: "not-allowed" } : undefined}>
         {busy ? "Reading the reviews…" : "Ask"}
       </button>
@@ -601,7 +625,22 @@ function Ask({ date, onOpenBand, onClose }) {
 
       {err && <p className="bmb-error">{err}</p>}
 
-      {res && (
+      {res?.clarify && (
+        <div style={{ marginTop: 18 }} aria-live="polite">
+          <p className="bmb-answer" style={{ marginBottom: 12 }}>{res.clarify.question}</p>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
+            {res.clarify.options.map((opt) => (
+              <button key={opt} className="bmb-chip" disabled={busy}
+                onClick={() => answerClarify(res.clarify.key, opt)}>{opt}</button>
+            ))}
+          </div>
+          <p className="bmb-note" style={{ marginTop: 12 }}>
+            One answer is usually enough to get to real results.
+          </p>
+        </div>
+      )}
+
+      {res && !res.clarify && (
         <div style={{ marginTop: 16 }} aria-live="polite">
           <p className="bmb-answer">{res.answer}</p>
 

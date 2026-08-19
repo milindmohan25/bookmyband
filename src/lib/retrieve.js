@@ -36,15 +36,21 @@ const CITY_WORDS = {
   Lucknow: ["lucknow", "awadh"],
 };
 
-/* Indian money talk: "1.5 lakh", "80k", "₹90,000", "under 1,00,000". */
+/* Indian money talk: "1.5 lakh", "80k", "₹90,000", "under 1,00,000".
+   A bare number only counts as a budget when the sentence is about
+   money — otherwise any stray digits would silently become a price cap. */
 function readBudget(q) {
   const s = q.toLowerCase().replace(/,/g, "");
   let m = s.match(/(\d+(?:\.\d+)?)\s*(lakh|lac|l\b)/);
   if (m) return Math.round(parseFloat(m[1]) * 100000);
   m = s.match(/(\d+(?:\.\d+)?)\s*k\b/);
   if (m) return Math.round(parseFloat(m[1]) * 1000);
-  m = s.match(/₹\s*(\d{4,7})/) || s.match(/(\d{5,7})/);
+  m = s.match(/₹\s*(\d{4,7})/) || s.match(/\brs\.?\s*(\d{4,7})/);
   if (m) return parseInt(m[1], 10);
+  if (/under|below|less|within|max|budget|upto|up to|around|about|spend|cost|price|per/.test(s)) {
+    m = s.match(/\b(\d{4,7})\b/);
+    if (m) return parseInt(m[1], 10);
+  }
   return null;
 }
 
@@ -63,9 +69,7 @@ export function readIntent(query) {
 
   const city = Object.keys(CITY_WORDS).find((c) => has(CITY_WORDS[c])) || null;
   const genres = Object.keys(GENRE).filter((g) => has(GENRE[g]));
-  const budget = /under|below|less|within|max|budget|cheap|affordable|upto|up/.test(query.toLowerCase())
-    ? readBudget(query)
-    : readBudget(query);
+  const budget = readBudget(query);
 
   // The reliability thesis of the product, asked in plain words. Written
   // against how people actually phrase it — "did they turn up", "turned
@@ -82,14 +86,22 @@ export function readIntent(query) {
     wantsCheap: /cheap|budget|afford|inexpensive|low.?cost|save|value/i.test(query),
     wantsBig: /\bbig\b|large|grand|huge|\b1[0-9]\s*piece|orchestra/i.test(query),
     wantsSmall: /small|intimate|quiet|acoustic|\bfew\b/i.test(query),
+    // A destination wedding is a travel question, and the seed set can
+    // answer it: outstation cost, whether there is a written contract,
+    // and whether the advance comes back if plans move.
+    destination: /destination|outstation|out.?station|out of town|another city|travel|travell|away|abroad|goa|udaipur|resort|palace/i.test(query),
+    // "a good band", "best one", "worth it" — vague, but a real question.
+    // Answered with what the evidence supports, not refused for wording.
+    wantsGood: /\bgood\b|\bbest\b|\bnice\b|great|recommend|suggest|\btop\b|decent|quality|worth|favourite|favorite|should i|which one/i.test(query),
   };
 
-  // Did we understand anything at all? Used to decide whether to answer
-  // or abstain, so a recognised intent counts even when no band name or
-  // genre word appears in the question.
+  // What we understood. A recognised intent counts even when the question
+  // names no band or genre — "did they actually turn up?" and "a good
+  // destination band" both matter and match no band's text.
   intent.hasSignal = Boolean(
-    city || genres.length || budget ||
-    wantsReliable || intent.wantsCheap || intent.wantsBig || intent.wantsSmall
+    city || genres.length || budget || wantsReliable ||
+    intent.wantsCheap || intent.wantsBig || intent.wantsSmall ||
+    intent.destination || intent.wantsGood
   );
 
   return intent;
@@ -135,6 +147,29 @@ function scoreBand(band, query, intent, date) {
         : a.tier === "mixed" ? "reviewers disagree on reliability"
         : "too little evidence to say"
     );
+  }
+
+  // Travelling changes what matters: a written contract and a refundable
+  // advance stop being paperwork once the band has to reach another city.
+  if (intent.destination) {
+    score += 2;
+    if (band.price.contract) { score += 3; why.push("has a written contract"); }
+    else { score -= 2; why.push("no written contract — risky for travel"); }
+    if (band.price.refundDays > 0) { score += 2; why.push(`advance refundable up to ${band.price.refundDays} days before`); }
+    if (typeof band.price.outstation === "number") {
+      score += Math.max(0, 3 - band.price.outstation / 12000);
+      why.push(`travels outstation for ₹${band.price.outstation.toLocaleString("en-IN")}`);
+    }
+  }
+
+  // A vague ask is still a real one. Answer it with what the evidence
+  // supports rather than refusing it for its wording — the tiers already
+  // stop this from becoming a fabricated recommendation.
+  if (intent.wantsGood) {
+    const byTier = { consistent: 5, mixed: 2, limited: 1, flagged: 3 };
+    score += byTier[a.tier] ?? 0;
+    if (a.tier === "consistent") why.push("the evidence backs it");
+    if (a.tier === "flagged") why.push("flagged — surfaced so it is not mistaken for a safe pick");
   }
 
   const free = !date || !band.booked.includes(date);

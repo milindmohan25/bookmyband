@@ -16,3 +16,6 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+
+# workaround artefacts — patches are a transport, not project files
+*.patch
