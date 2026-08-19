@@ -734,7 +734,7 @@ function Band({ band, date, onBack }) {
 
 /* ---------- app ---------- */
 
-export default function BookMyBand() {
+export default function App() {
   const [screen, setScreen] = useState("boot");
   const [date, setDate] = useState("2026-11-21");
   const [city, setCity] = useState("Delhi NCR");

@@ -1,4 +1,3 @@
-[Uploading README.md…]()
 # BookMyBand
 
 A portfolio project exploring an AI feature where AI is genuinely load-bearing — and designing around its failure mode rather than hiding it.
@@ -43,24 +42,36 @@ Evidence volume gates which tier is even reachable. A band cannot earn a positiv
 ## Status
 
 - [x] PRD v2.0 (problem, JTBDs, scope, AI feature design)
-- [ ] Seed data — sparse-review bands, a dispute-flagged band, strong-review bands
-- [ ] Reliability Signal prompt + abstention constraints
-- [ ] Working demo
+- [x] Seed data — sparse-review bands, a dispute-flagged band, strong-review bands
+- [ ] Reliability Signal prompt + abstention constraints (demo uses a deterministic stand-in, see below)
+- [x] Working demo
 - [ ] Deployed
 
 ## Stack
 
-- Frontend: React
-- AI: Anthropic API (Claude), single structured call per band
+- Frontend: React (Vite)
+- AI: Anthropic API (Claude), single structured call per band — not yet wired in; the demo computes the same tiers with a pure deterministic function over hand-tagged seed data
 - Data: local JSON seed set (no DB — 20-30 bands doesn't need one)
 - Hosting: static deploy
+
+## Running locally
+
+```
+npm install
+npm run dev       # dev server
+npm run build     # production build to dist/
+npm run preview   # preview the production build
+```
 
 ## Repo layout
 
 ```
+index.html
 src/
+  main.jsx          # entry point
+  App.jsx           # BookMyBand demo: search, results, band detail, reliability tiers
   components/
-    BootLogo.jsx    # animated splash screen
+    BootLogo.jsx    # animated splash screen (standalone design exploration)
 ```
 
 ## Notes
