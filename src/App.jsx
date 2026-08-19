@@ -3,6 +3,7 @@ import {
   IS_LIVE, getSession, consumeRedirect, signInWithGoogle, sendEmailLink, signOut,
   getProfile, saveProfile, listEnquiries, createEnquiry,
 } from "./lib/backend";
+import { Piece, CUES, AUTHORED_TOTAL, FIELDS } from "./components/BootLogo.jsx";
 
 /* ============================================================
    BookMyBand — working demo, no model in the loop.
@@ -456,15 +457,31 @@ function Signal({ a, compact }) {
   );
 }
 
-/* ---------- boot ---------- */
+/* ---------- boot ----------
+   The splash plays the authored BootLogo piece itself rather than a
+   reduced copy of it: same mandap, garland, shehnai fanfare and
+   wordmark. Rendered at the size it was composed for and scaled to
+   fit, so the logo reads identically at any viewport, and played once
+   through instead of looped.
+*/
 
-const ARCH = "M88 214 C88 152 120 120 148 114 C170 110 180 96 200 60 C220 96 230 110 252 114 C280 120 312 152 312 214";
-const BOOT_MS = 2300;
+const BOOT_DESIGN = { w: 400, h: 711 };  // 9:16 at the width the piece is drawn 1:1
+const BOOT_SPEED = 1.7;                  // the authored timeline is ~8s; a splash should not be
 
 function Boot({ onDone }) {
-  const [p, setP] = useState(0);
+  const [T, setT] = useState(0);
+  const [vp, setVp] = useState(() => ({
+    w: typeof window === "undefined" ? BOOT_DESIGN.w : window.innerWidth,
+    h: typeof window === "undefined" ? BOOT_DESIGN.h : window.innerHeight,
+  }));
   const done = useRef(false);
   const finish = () => { if (!done.current) { done.current = true; onDone(); } };
+
+  useEffect(() => {
+    const onResize = () => setVp({ w: window.innerWidth, h: window.innerHeight });
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
 
   useEffect(() => {
     const reduce = typeof window !== "undefined" && window.matchMedia &&
@@ -473,66 +490,38 @@ function Boot({ onDone }) {
     const t0 = performance.now();
     let raf;
     const tick = (now) => {
-      const v = Math.min((now - t0) / BOOT_MS, 1);
-      setP(v);
-      if (v < 1) raf = requestAnimationFrame(tick); else finish();
+      const t = ((now - t0) / 1000) * BOOT_SPEED;
+      setT(t);
+      if (t < AUTHORED_TOTAL) raf = requestAnimationFrame(tick); else finish();
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
   }, []);
 
-  const seg = (a, b) => Math.min(Math.max((p - a) / (b - a), 0), 1);
-  const ease = (t) => 1 - Math.pow(1 - t, 3);
-  const arch = ease(seg(0.05, 0.5));
-  const pillar = ease(seg(0.25, 0.6));
-  const finial = ease(seg(0.0, 0.3));
-  const word = ease(seg(0.45, 0.85));
-  const fade = 1 - seg(0.92, 1);
-  const letters = "BookMyBand".split("");
+  // Dissolve the field over the authored Reset beat, so the splash hands
+  // over to the app rather than cutting to it.
+  const fadeFrom = CUES.Reset + 0.15;
+  const fade = 1 - Math.min(Math.max((T - fadeFrom) / (AUTHORED_TOTAL - fadeFrom), 0), 1);
+
+  // The field fills the viewport; the logo is sized against the frame it
+  // was composed in, so a wide screen gets more field rather than a
+  // stretched mark — and there is no letterbox edge to give away a box.
+  const frame = { w: Math.min(vp.w, BOOT_DESIGN.w), h: BOOT_DESIGN.h };
 
   return (
     <div
       onClick={finish}
       role="button"
       tabIndex={0}
+      aria-label="Skip intro"
       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " " || e.key === "Escape") finish(); }}
-      style={{
-        position: "fixed", inset: 0, cursor: "pointer", opacity: fade,
-        background: `radial-gradient(75% 55% at 50% 40%, ${C.field} 0%, #7C0B10 45%, ${C.fieldDeep} 100%)`,
-        display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 22,
-      }}
+      style={{ position: "fixed", inset: 0, cursor: "pointer", opacity: fade, overflow: "hidden" }}
     >
-      <svg width="150" height="158" viewBox="0 0 400 420" style={{ overflow: "visible" }}>
-        <g opacity={pillar} transform={`translate(0 ${(1 - pillar) * 20})`}>
-          <rect x="52" y="352" width="296" height="15" rx="4" fill={C.goldLite} />
-          <rect x="38" y="372" width="324" height="9" rx="4" fill={C.gold} />
-        </g>
-        {[74, 296].map((x) => (
-          <g key={x} transform={`translate(0 356) scale(1 ${pillar}) translate(0 -356)`}>
-            <rect x={x + 4} y="214" width="22" height="140" fill={C.goldLite} />
-            <rect x={x - 4} y="200" width="38" height="15" rx="3" fill={C.cream} />
-          </g>
-        ))}
-        <path d={ARCH} pathLength="1" strokeDasharray="1 1" strokeDashoffset={1 - arch} fill="none"
-          stroke={C.goldLite} strokeWidth="10" strokeLinecap="round" />
-        <g transform={`translate(200 ${44}) scale(${0.5 + finial * 0.5})`} opacity={finial}>
-          <path d="M0 -34 L7 -20 L0 -6 L-7 -20 Z" fill={C.cream} />
-          <rect x="-2.5" y="-20" width="5" height="20" fill={C.goldLite} />
-          <circle cx="0" cy="6" r="9" fill={C.goldLite} />
-        </g>
-      </svg>
-      <div style={{ display: "flex", fontFamily: FONT_DISPLAY, fontSize: 40, lineHeight: 1 }}>
-        {letters.map((ch, i) => {
-          const lp = ease(Math.min(Math.max((word - i * 0.05) / 0.5, 0), 1));
-          return (
-            <span key={i} style={{
-              opacity: lp, transform: `translateY(${(1 - lp) * 18}px)`,
-              color: i === 4 || i === 5 ? C.goldLite : C.cream,
-            }}>{ch}</span>
-          );
-        })}
-      </div>
-      <div className="bmb-eyebrow" style={{ color: C.goldLite, opacity: word * 0.8 }}>Tap to skip</div>
+      <Piece T={T} C={CUES} w={vp.w} h={vp.h} frame={frame} bg={FIELDS["#A61217"]} tagline />
+      <div className="bmb-eyebrow" style={{
+        position: "absolute", left: 0, right: 0, bottom: 28, textAlign: "center",
+        color: C.goldLite, opacity: 0.75, pointerEvents: "none",
+      }}>Tap to skip</div>
     </div>
   );
 }

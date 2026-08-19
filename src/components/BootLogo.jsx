@@ -39,10 +39,10 @@ const SCENES = [
   { name: "Settle", dur: 1.3 },
   { name: "Reset", dur: 0.7 },
 ];
-const CUES = {};
+export const CUES = {};
 let acc = 0;
 for (const s of SCENES) { CUES[s.name] = acc; acc += s.dur; }
-const AUTHORED_TOTAL = acc;
+export const AUTHORED_TOTAL = acc;
 
 // geometry helpers
 const ARCH = "M88 214 C88 152 120 120 148 114 C170 110 180 96 200 60 C220 96 230 110 252 114 C280 120 312 152 312 214";
@@ -199,10 +199,17 @@ function Wordmark({ T, C, scale, tagline }) {
   );
 }
 
-function Piece({ T, C, w: W, h: H, bg, tagline }) {
-  const tall = H > W * 1.2;
-  const scale = tall ? 1 : 0.84;
-  const markW = (tall ? 190 : 150) * (W / 400);
+/* `frame` sizes the composition (mark, wordmark, lift) independently of
+   the surface it is painted on, so the field, vignette and halo can fill
+   a whole viewport while the logo keeps the proportions it was authored
+   at. Omit it and the piece sizes against its own box, as the demo does. */
+export function Piece({ T, C, w: W, h: H, bg, tagline, frame }) {
+  const F = frame || { w: W, h: H };
+  const tall = F.h > F.w * 1.2;
+  // 400 is the width the piece is drawn at 1:1; mark and wordmark scale
+  // together off it so the lockup holds on a narrow phone.
+  const scale = (tall ? 1 : 0.84) * (F.w / 400);
+  const markW = (tall ? 190 : 150) * (F.w / 400);
 
   const cam = MOTION.enter({ from: 1.07, to: 1, start: 0, end: AUTHORED_TOTAL * 0.7 })(T);
   const punch = 1 + 0.035 * (1 - MOTION.pop({ start: C.Fanfare + 0.2, end: C.Fanfare + 1.0 })(T));
@@ -237,7 +244,7 @@ function Piece({ T, C, w: W, h: H, bg, tagline }) {
   );
 }
 
-const FIELDS = {
+export const FIELDS = {
   "#A61217": "radial-gradient(75% 55% at 50% 40%, #A61217 0%, #7C0B10 45%, #48060A 100%)",
   "#8A1020": "radial-gradient(75% 55% at 50% 40%, #8A1020 0%, #5E0A16 48%, #33050C 100%)",
   "#C21D18": "radial-gradient(75% 55% at 50% 40%, #C21D18 0%, #8E1010 45%, #4E0708 100%)",
