@@ -678,8 +678,9 @@ function Ask({ date, onOpenBand, onClose }) {
 
           {!ASK_IS_LIVE && (
             <div className="bmb-demo">
-              No answer endpoint configured, so this reply is composed locally from the same retrieved
-              facts rather than by a model. Set VITE_ASK_ENDPOINT to route questions through Claude.
+              Running without a model key: retrieval is real, and this reply was composed from the
+              facts it returned rather than written by an LLM. The deployed demo stays up either way —
+              a portfolio link should not go dark when a key expires.
             </div>
           )}
         </div>
