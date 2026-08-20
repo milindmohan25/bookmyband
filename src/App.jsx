@@ -2,7 +2,10 @@ import React, { useState, useEffect, useRef, useMemo } from "react";
 import {
   IS_LIVE, getSession, consumeRedirect, signInWithGoogle, sendEmailLink, signOut,
   getProfile, saveProfile, listEnquiries, createEnquiry,
-} from "./src/lib/backend";
+} from "./lib/backend";
+import { Piece, CUES, AUTHORED_TOTAL, FIELDS } from "./components/BootLogo.jsx";
+import { SEED, GATE, assess as assessBand } from "./lib/seed.js";
+import { ask, ASK_IS_LIVE } from "./lib/ask.js";
 
 /* ============================================================
    BookMyBand — working demo, no model in the loop.
@@ -127,6 +130,46 @@ const CSS = `
 
 .bmb-note { font-size: 13px; line-height: 1.55; color: ${C.inkSoft}; }
 
+/* ask — the AI entry point. Gold, because it is the one thing here
+   that is not a plain lookup. */
+.bmb-ask-open {
+  display: flex; align-items: center; gap: 11px; width: 100%; cursor: pointer;
+  background: #FFFBF2; border: 1px solid ${C.gold}; border-radius: 2px;
+  padding: 13px 14px; margin-bottom: 22px; font-family: inherit; text-align: left;
+}
+.bmb-ask-open:hover { background: ${C.cream}; }
+.bmb-ask-open span { font-size: 14.5px; color: ${C.inkSoft}; }
+.bmb-spark { flex: none; color: ${C.gold}; }
+
+.bmb-ask-box {
+  border: 1px solid ${C.gold}; border-radius: 2px; background: #FFFBF2;
+  padding: 16px 15px; margin-bottom: 22px;
+}
+.bmb-ask-in {
+  width: 100%; min-height: 66px; resize: vertical; padding: 11px 12px;
+  font-family: ${FONT_BODY}; font-size: 15px; line-height: 1.5; color: ${C.ink};
+  background: ${C.paper}; border: 1px solid ${C.rule}; border-radius: 2px;
+}
+.bmb-ask-in:focus-visible { outline: 2px solid ${C.field}; outline-offset: 2px; }
+.bmb-chip {
+  background: ${C.paperDeep}; border: 1px solid ${C.rule}; border-radius: 999px;
+  padding: 5px 11px; font-size: 12.5px; color: ${C.ink}; cursor: pointer; font-family: inherit;
+}
+.bmb-chip:hover { border-color: ${C.gold}; background: ${C.cream}; }
+.bmb-answer { font-size: 15px; line-height: 1.6; white-space: pre-wrap; margin: 0; }
+.bmb-caveat {
+  border-left: 3px solid ${C.crimson}; background: #FDF3EE;
+  padding: 10px 12px; margin-top: 14px; font-size: 14px; line-height: 1.55;
+}
+.bmb-dots span {
+  display: inline-block; width: 5px; height: 5px; border-radius: 50%;
+  background: ${C.gold}; margin-right: 4px; animation: bmbBlink 1.1s infinite both;
+}
+.bmb-dots span:nth-child(2) { animation-delay: 0.16s; }
+.bmb-dots span:nth-child(3) { animation-delay: 0.32s; }
+@keyframes bmbBlink { 0%, 80%, 100% { opacity: 0.25; } 40% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .bmb-dots span { animation: none; opacity: 0.6; } }
+
 .bmb-scrim {
   position: fixed; inset: 0; z-index: 20; background: rgba(45, 5, 7, 0.55);
   display: flex; align-items: flex-end; justify-content: center;
@@ -162,242 +205,22 @@ const CSS = `
 @media (prefers-reduced-motion: reduce) { .bmb-rise { animation: none; } }
 `;
 
-/* ---------- seed data ----------
-   `reliability`: what a review actually evidences about showing up.
-     specific  — names a concrete reliability behaviour (arrived on time, played the booked set)
-     negative  — reports a reliability failure short of a dispute (late, short set)
-     none      — praise or complaint with no reliability content (vibe, song list, price)
-   `flag`: credible report of no-show / substitution / deposit dispute. Never averaged away.
-*/
+/* ---------- reliability ----------
+   Seed data and the assessment over it live in lib/seed.js so the ask
+   feature retrieves from exactly what the screens render. Tier -> colour
+   is the only part that belongs here. */
 
-const R = (author, date, text, reliability, flag) => ({ author, date, text, reliability, flag: flag || null });
+const TIER_COLOR = {
+  flagged: C.crimson,
+  limited: C.mute,
+  mixed: C.marigold,
+  consistent: C.green,
+};
 
-const SEED = [
-  {
-    id: "sitara",
-    name: "Sitara Sound Collective",
-    city: "Delhi NCR",
-    kind: "10-piece live band · Hindi, Punjabi, retro",
-    size: 10,
-    booked: ["2026-11-21", "2026-12-05", "2026-12-12"],
-    price: {
-      performance: 145000, extraHour: 22000, sound: "included", travelCity: 0,
-      outstation: 18000, earlySetup: 8000, dj: 25000,
-      advancePct: 40, refundDays: 45, contract: true,
-    },
-    reviews: [
-      R("Ritika S.", "Feb 2026", "Arrived at 4pm for a 7pm start, sound check done well before guests came in. Played the full three hours we booked.", "specific"),
-      R("Aman & Nidhi", "Jan 2026", "Same ten musicians we met at the audition turned up on the day. That mattered more to us than anything.", "specific"),
-      R("Harpreet K.", "Dec 2025", "Set list was a bit safe for our crowd, we wanted more Punjabi folk. But they were exactly on schedule.", "specific"),
-      R("Devansh M.", "Dec 2025", "Great energy, the brass section was the highlight of the sangeet.", "none"),
-      R("Sunita R.", "Nov 2025", "Stayed 20 minutes past the end because the pheras ran late. No fuss, no extra charge.", "specific"),
-      R("Kabir J.", "Nov 2025", "Sound engineer knew the venue already so setup was quick.", "specific"),
-      R("Meghna T.", "Oct 2025", "Loved them. Everyone asked who we booked.", "none"),
-      R("Arjun P.", "Sep 2025", "Priced higher than the others we shortlisted, worth it in the end.", "none"),
-      R("Farida Q.", "Aug 2025", "Vocalist was ill and they told us four days ahead, sent a replacement recording to approve first. Handled properly.", "specific"),
-    ],
-  },
-  {
-    id: "marigold",
-    name: "The Marigold Brass Co.",
-    city: "Delhi NCR",
-    kind: "14-piece baraat brass · processional, dhol",
-    size: 14,
-    booked: ["2026-12-05"],
-    price: {
-      performance: 98000, extraHour: 15000, sound: 20000, travelCity: 6000,
-      outstation: 24000, earlySetup: null, dj: null,
-      advancePct: 60, refundDays: 0, contract: false,
-    },
-    reviews: [
-      R("Nikhil B.", "Mar 2026", "Best baraat entry on our street in years. The dhol players were unreal.", "none"),
-      R("Preeti A.", "Feb 2026", "Twelve of the fourteen musicians we were shown did not turn up. They sent juniors instead and would not adjust the price. Our 60% advance was already paid and they refused to return any of it.", "negative", "substitution"),
-      R("Rohan D.", "Feb 2026", "Loud, fun, exactly the vibe we wanted for the procession.", "none"),
-      R("Simran V.", "Jan 2026", "Good value compared to quotes we got elsewhere.", "none"),
-      R("Tarun G.", "Jan 2026", "On time and set up quickly.", "specific"),
-      R("Ishita M.", "Dec 2025", "Everyone danced. Would recommend for a baraat.", "none"),
-      R("Yash K.", "Dec 2025", "Really strong performers.", "none"),
-      R("Anita L.", "Nov 2025", "The trumpet solo was lovely.", "none"),
-      R("Vikram S.", "Nov 2025", "Turned up on schedule, played the full route.", "specific"),
-      R("Neha C.", "Oct 2025", "Great for the money.", "none"),
-      R("Gaurav T.", "Oct 2025", "Fantastic energy, five stars.", "none"),
-      R("Pooja N.", "Sep 2025", "Booking over WhatsApp was easy, no paperwork though.", "none"),
-    ],
-  },
-  {
-    id: "anhad",
-    name: "Anhad Live",
-    city: "Jaipur",
-    kind: "6-piece live band · Sufi, ghazal, acoustic",
-    size: 6,
-    booked: [],
-    price: {
-      performance: 72000, extraHour: 12000, sound: 14000, travelCity: 3000,
-      outstation: 15000, earlySetup: 5000, dj: null,
-      advancePct: 30, refundDays: 30, contract: true,
-    },
-    reviews: [
-      R("Shalini M.", "Apr 2026", "Beautiful voices. Our mehndi felt like a private concert.", "none"),
-      R("Ayaan R.", "Mar 2026", "New band but very professional with us over email.", "none"),
-      R("Divya K.", "Feb 2026", "Lovely set, would book again.", "none"),
-    ],
-  },
-  {
-    id: "baaraat",
-    name: "Baaraat Beats Bandwalla",
-    city: "Delhi NCR",
-    kind: "12-piece band + brass · Bollywood, bhangra",
-    size: 12,
-    booked: ["2026-11-21", "2026-11-28"],
-    price: {
-      performance: 112000, extraHour: 18000, sound: "included", travelCity: 4000,
-      outstation: 20000, earlySetup: 6000, dj: 18000,
-      advancePct: 50, refundDays: 21, contract: true,
-    },
-    reviews: [
-      R("Manav S.", "Mar 2026", "Turned up 90 minutes late. The mandap was ready and guests were seated with nothing happening.", "negative"),
-      R("Ekta B.", "Mar 2026", "On time, set up early, played right through.", "specific"),
-      R("Rahul V.", "Feb 2026", "Arrived when they said they would. No issues at all.", "specific"),
-      R("Jyoti P.", "Feb 2026", "They were late for the sangeet but made up for it by playing an extra half hour.", "negative"),
-      R("Amitav N.", "Jan 2026", "Musicians were excellent, crowd loved it.", "none"),
-      R("Sneha R.", "Jan 2026", "Two of the singers were different from the ones we auditioned. They did tell us a week before.", "negative"),
-      R("Kunal M.", "Dec 2025", "Solid band, good song range.", "none"),
-      R("Ridhi T.", "Dec 2025", "Punctual and easy to coordinate with our planner.", "specific"),
-    ],
-  },
-  {
-    id: "nauras",
-    name: "Nauras Ensemble",
-    city: "Mumbai",
-    kind: "8-piece live band · jazz, retro Bollywood",
-    size: 8,
-    booked: ["2026-12-12"],
-    price: {
-      performance: 165000, extraHour: 26000, sound: "included", travelCity: 0,
-      outstation: 30000, earlySetup: "included", dj: 30000,
-      advancePct: 35, refundDays: 60, contract: true,
-    },
-    reviews: [
-      R("Farhan A.", "Apr 2026", "Load-in three hours early, full sound check, started on the minute.", "specific"),
-      R("Tanvi D.", "Mar 2026", "Exactly the line-up in the contract, all eight of them.", "specific"),
-      R("Zoya H.", "Mar 2026", "The saxophonist alone was worth the fee.", "none"),
-      R("Nitin K.", "Feb 2026", "Monsoon shifted our venue indoors two days before and they re-planned the setup without complaint or extra cost.", "specific"),
-      R("Aditi J.", "Feb 2026", "Expensive, but nothing went wrong all evening.", "specific"),
-      R("Rushil B.", "Jan 2026", "Very polished. Our older guests loved the retro set.", "none"),
-      R("Leena M.", "Dec 2025", "Played the booked set list, finished on time, packed down quietly during dinner.", "specific"),
-    ],
-  },
-  {
-    id: "rangeen",
-    name: "Rangeen Roadshow",
-    city: "Chandigarh",
-    kind: "9-piece band · pop, bhangra, DJ hybrid",
-    size: 9,
-    booked: [],
-    price: {
-      performance: 88000, extraHour: 14000, sound: 16000, travelCity: 5000,
-      outstation: 17000, earlySetup: null, dj: 14000,
-      advancePct: 50, refundDays: 15, contract: true,
-    },
-    reviews: [
-      R("Gurpreet S.", "Apr 2026", "Dance floor was full from the first song.", "none"),
-      R("Meera K.", "Mar 2026", "Song selection was perfect for a mixed-age crowd.", "none"),
-      R("Vivek T.", "Mar 2026", "Good sound quality, decent lights.", "none"),
-      R("Anjali R.", "Feb 2026", "Five stars, so much fun.", "none"),
-      R("Sahil M.", "Feb 2026", "Slightly pricey for Chandigarh but they delivered a good show.", "none"),
-      R("Kirti B.", "Jan 2026", "Loved the bhangra medley.", "none"),
-      R("Deepak N.", "Jan 2026", "Nice people to deal with.", "none"),
-      R("Ruchi A.", "Dec 2025", "Great atmosphere at the reception.", "none"),
-      R("Ashwin P.", "Dec 2025", "Would recommend to friends.", "none"),
-      R("Nisha V.", "Nov 2025", "Really enjoyed the evening.", "none"),
-      R("Tejas L.", "Nov 2025", "Good band, good energy.", "none"),
-    ],
-  },
-  {
-    id: "qissa",
-    name: "Qissa Qawwali Party",
-    city: "Lucknow",
-    kind: "7-piece qawwali party · traditional",
-    size: 7,
-    booked: [],
-    price: {
-      performance: 64000, extraHour: 10000, sound: 12000, travelCity: 2500,
-      outstation: 14000, earlySetup: null, dj: null,
-      advancePct: 25, refundDays: 30, contract: false,
-    },
-    reviews: [
-      R("Sadia F.", "Mar 2026", "Moving performance, the whole family was in tears by the end.", "none"),
-      R("Imran Q.", "Jan 2026", "Traditional and authentic, exactly what we hoped for.", "none"),
-    ],
-  },
-  {
-    id: "dhun",
-    name: "Dhun Sangam Orchestra",
-    city: "Delhi NCR",
-    kind: "16-piece orchestra · film songs, live strings",
-    size: 16,
-    booked: ["2026-11-28"],
-    price: {
-      performance: 190000, extraHour: 28000, sound: 28000, travelCity: 8000,
-      outstation: 35000, earlySetup: 10000, dj: 22000,
-      advancePct: 55, refundDays: 0, contract: false,
-    },
-    reviews: [
-      R("Suresh & Kamala", "Feb 2026", "They did not arrive. No call, no message. We ran the reception on a phone playlist and never saw the advance again.", "negative", "no-show"),
-      R("Priya M.", "Feb 2026", "Sixteen musicians on stage is a real spectacle.", "none"),
-      R("Hemant R.", "Jan 2026", "String section was gorgeous.", "none"),
-      R("Bhavna S.", "Jan 2026", "Started an hour late but played beautifully once they did.", "negative"),
-      R("Lalit K.", "Dec 2025", "Impressive scale for the price.", "none"),
-      R("Reema J.", "Dec 2025", "Guests were amazed.", "none"),
-      R("Om Prakash T.", "Nov 2025", "Very grand, good for a large venue.", "none"),
-    ],
-  },
-];
-
-/* ---------- reliability: pure, deterministic, no model ---------- */
-
-const GATE = 5; // usable reviews required before any trust claim is reachable
-
-function assess(band) {
-  const rs = band.reviews;
-  const flags = rs.filter((r) => r.flag);
-  const specific = rs.filter((r) => r.reliability === "specific");
-  const negative = rs.filter((r) => r.reliability === "negative");
-  const onTopic = specific.length + negative.length;
-
-  const base = { total: rs.length, onTopic, specific, negative, flags, gate: GATE };
-
-  // Flagged is checked first and is never averaged against volume.
-  if (flags.length) {
-    const kinds = [...new Set(flags.map((f) => f.flag))];
-    return {
-      ...base, tier: "flagged", label: "Flagged", color: C.crimson,
-      headline: `${flags.length} report${flags.length > 1 ? "s" : ""} of ${kinds.join(" and ")}`,
-      body: `Shown regardless of the ${rs.length - flags.length} other reviews. A single credible report of this kind is not cancelled out by positive ones, because you cannot get the day back.`,
-    };
-  }
-  if (onTopic < GATE) {
-    return {
-      ...base, tier: "limited", label: "Limited info", color: C.mute,
-      headline: `${onTopic} of ${GATE} reviews needed`,
-      body: onTopic === 0
-        ? `${rs.length} review${rs.length === 1 ? "" : "s"}, none of which say anything about whether the band turned up or played what was booked. There is no trust claim to make here.`
-        : `Only ${onTopic} of ${rs.length} reviews mention reliability. That is not enough to tell you anything, and a score here would be a guess dressed as a fact.`,
-    };
-  }
-  if (negative.length) {
-    return {
-      ...base, tier: "mixed", label: "Mixed", color: C.marigold,
-      headline: `${specific.length} clean, ${negative.length} with problems`,
-      body: "Reviewers disagree on reliability. Both sides are below — read them rather than trusting an average of them.",
-    };
-  }
-  return {
-    ...base, tier: "consistent", label: "Consistent", color: C.green,
-    headline: `${specific.length} reviews, no reliability complaints`,
-    body: "Multiple reviewers name specific things that went right: arriving early, the booked musicians appearing, playing the full set.",
-  };
-}
+const assess = (band) => {
+  const a = assessBand(band);
+  return { ...a, color: TIER_COLOR[a.tier] };
+};
 
 /* ---------- helpers ---------- */
 
@@ -456,15 +279,31 @@ function Signal({ a, compact }) {
   );
 }
 
-/* ---------- boot ---------- */
+/* ---------- boot ----------
+   The splash plays the authored BootLogo piece itself rather than a
+   reduced copy of it: same mandap, garland, shehnai fanfare and
+   wordmark. Rendered at the size it was composed for and scaled to
+   fit, so the logo reads identically at any viewport, and played once
+   through instead of looped.
+*/
 
-const ARCH = "M88 214 C88 152 120 120 148 114 C170 110 180 96 200 60 C220 96 230 110 252 114 C280 120 312 152 312 214";
-const BOOT_MS = 2300;
+const BOOT_DESIGN = { w: 400, h: 711 };  // 9:16 at the width the piece is drawn 1:1
+const BOOT_SPEED = 1.7;                  // the authored timeline is ~8s; a splash should not be
 
 function Boot({ onDone }) {
-  const [p, setP] = useState(0);
+  const [T, setT] = useState(0);
+  const [vp, setVp] = useState(() => ({
+    w: typeof window === "undefined" ? BOOT_DESIGN.w : window.innerWidth,
+    h: typeof window === "undefined" ? BOOT_DESIGN.h : window.innerHeight,
+  }));
   const done = useRef(false);
   const finish = () => { if (!done.current) { done.current = true; onDone(); } };
+
+  useEffect(() => {
+    const onResize = () => setVp({ w: window.innerWidth, h: window.innerHeight });
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
 
   useEffect(() => {
     const reduce = typeof window !== "undefined" && window.matchMedia &&
@@ -473,66 +312,38 @@ function Boot({ onDone }) {
     const t0 = performance.now();
     let raf;
     const tick = (now) => {
-      const v = Math.min((now - t0) / BOOT_MS, 1);
-      setP(v);
-      if (v < 1) raf = requestAnimationFrame(tick); else finish();
+      const t = ((now - t0) / 1000) * BOOT_SPEED;
+      setT(t);
+      if (t < AUTHORED_TOTAL) raf = requestAnimationFrame(tick); else finish();
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
   }, []);
 
-  const seg = (a, b) => Math.min(Math.max((p - a) / (b - a), 0), 1);
-  const ease = (t) => 1 - Math.pow(1 - t, 3);
-  const arch = ease(seg(0.05, 0.5));
-  const pillar = ease(seg(0.25, 0.6));
-  const finial = ease(seg(0.0, 0.3));
-  const word = ease(seg(0.45, 0.85));
-  const fade = 1 - seg(0.92, 1);
-  const letters = "BookMyBand".split("");
+  // Dissolve the field over the authored Reset beat, so the splash hands
+  // over to the app rather than cutting to it.
+  const fadeFrom = CUES.Reset + 0.15;
+  const fade = 1 - Math.min(Math.max((T - fadeFrom) / (AUTHORED_TOTAL - fadeFrom), 0), 1);
+
+  // The field fills the viewport; the logo is sized against the frame it
+  // was composed in, so a wide screen gets more field rather than a
+  // stretched mark — and there is no letterbox edge to give away a box.
+  const frame = { w: Math.min(vp.w, BOOT_DESIGN.w), h: BOOT_DESIGN.h };
 
   return (
     <div
       onClick={finish}
       role="button"
       tabIndex={0}
+      aria-label="Skip intro"
       onKeyDown={(e) => { if (e.key === "Enter" || e.key === " " || e.key === "Escape") finish(); }}
-      style={{
-        position: "fixed", inset: 0, cursor: "pointer", opacity: fade,
-        background: `radial-gradient(75% 55% at 50% 40%, ${C.field} 0%, #7C0B10 45%, ${C.fieldDeep} 100%)`,
-        display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 22,
-      }}
+      style={{ position: "fixed", inset: 0, cursor: "pointer", opacity: fade, overflow: "hidden" }}
     >
-      <svg width="150" height="158" viewBox="0 0 400 420" style={{ overflow: "visible" }}>
-        <g opacity={pillar} transform={`translate(0 ${(1 - pillar) * 20})`}>
-          <rect x="52" y="352" width="296" height="15" rx="4" fill={C.goldLite} />
-          <rect x="38" y="372" width="324" height="9" rx="4" fill={C.gold} />
-        </g>
-        {[74, 296].map((x) => (
-          <g key={x} transform={`translate(0 356) scale(1 ${pillar}) translate(0 -356)`}>
-            <rect x={x + 4} y="214" width="22" height="140" fill={C.goldLite} />
-            <rect x={x - 4} y="200" width="38" height="15" rx="3" fill={C.cream} />
-          </g>
-        ))}
-        <path d={ARCH} pathLength="1" strokeDasharray="1 1" strokeDashoffset={1 - arch} fill="none"
-          stroke={C.goldLite} strokeWidth="10" strokeLinecap="round" />
-        <g transform={`translate(200 ${44}) scale(${0.5 + finial * 0.5})`} opacity={finial}>
-          <path d="M0 -34 L7 -20 L0 -6 L-7 -20 Z" fill={C.cream} />
-          <rect x="-2.5" y="-20" width="5" height="20" fill={C.goldLite} />
-          <circle cx="0" cy="6" r="9" fill={C.goldLite} />
-        </g>
-      </svg>
-      <div style={{ display: "flex", fontFamily: FONT_DISPLAY, fontSize: 40, lineHeight: 1 }}>
-        {letters.map((ch, i) => {
-          const lp = ease(Math.min(Math.max((word - i * 0.05) / 0.5, 0), 1));
-          return (
-            <span key={i} style={{
-              opacity: lp, transform: `translateY(${(1 - lp) * 18}px)`,
-              color: i === 4 || i === 5 ? C.goldLite : C.cream,
-            }}>{ch}</span>
-          );
-        })}
-      </div>
-      <div className="bmb-eyebrow" style={{ color: C.goldLite, opacity: word * 0.8 }}>Tap to skip</div>
+      <Piece T={T} C={CUES} w={vp.w} h={vp.h} frame={frame} bg={FIELDS["#A61217"]} tagline />
+      <div className="bmb-eyebrow" style={{
+        position: "absolute", left: 0, right: 0, bottom: 28, textAlign: "center",
+        color: C.goldLite, opacity: 0.75, pointerEvents: "none",
+      }}>Tap to skip</div>
     </div>
   );
 }
@@ -703,11 +514,187 @@ function PhoneStep({ session, onSaved, onSkip }) {
   );
 }
 
+/* ---------- ask ----------
+   Plain-language questions answered from the seed set. Retrieval runs
+   locally; the wording comes from Claude when an answer endpoint is
+   configured, and from a deterministic reader of the same facts when
+   it is not. Either way the abstention rules hold: nothing is claimed
+   that the reviews do not evidence, and a flag is never averaged away.
+*/
+
+function Spark({ size = 17 }) {
+  return (
+    <svg className="bmb-spark" width={size} height={size} viewBox="0 0 24 24" aria-hidden="true">
+      <path d="M12 2.6l1.9 5.6 5.6 1.9-5.6 1.9L12 17.6l-1.9-5.6L4.5 10.1l5.6-1.9z"
+        fill="currentColor" />
+      <path d="M18.6 15.4l.85 2.5 2.5.85-2.5.85-.85 2.5-.85-2.5-2.5-.85 2.5-.85z"
+        fill="currentColor" opacity="0.65" />
+    </svg>
+  );
+}
+
+const EXAMPLES = [
+  "Which of these has actually turned up on the day?",
+  "Brass band for a baraat in Delhi under ₹1 lakh",
+  "Something sufi and intimate in Jaipur",
+  "Is the cheapest one a risk?",
+];
+
+function Ask({ date, onOpenBand, onClose }) {
+  const [q, setQ] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [res, setRes] = useState(null);
+  const [err, setErr] = useState("");
+  // What the user has pinned down by answering follow-up questions.
+  const [facets, setFacets] = useState([]);
+  const [asked, setAsked] = useState([]);
+  const inputRef = useRef(null);
+
+  useEffect(() => { inputRef.current?.focus(); }, []);
+
+  const run = async (text, next = { facets, asked }) => {
+    const question = (text ?? q).trim();
+    if (!question || busy) return;
+    setQ(question); setBusy(true); setErr(""); setRes(null);
+    try {
+      setRes(await ask(question, { date, facets: next.facets, asked: next.asked }));
+    } catch (e) {
+      setErr(e.message || "That did not come back. Try again in a moment.");
+    }
+    setBusy(false);
+  };
+
+  // Start over from the typed question, dropping anything pinned.
+  const fresh = (text) => { setFacets([]); setAsked([]); run(text, { facets: [], asked: [] }); };
+
+  // Answer the follow-up: fold it in and immediately try again.
+  const answerClarify = (key, option) => {
+    const nextFacets = [...facets, option];
+    const nextAsked = [...asked, key];
+    setFacets(nextFacets); setAsked(nextAsked);
+    run(q, { facets: nextFacets, asked: nextAsked });
+  };
+
+  // A follow-up question carries no bandIds — guard, or this throws
+  // before the render even reaches the clarify branch.
+  const cited = (res?.bandIds || []).map((id) => SEED.find((b) => b.id === id)).filter(Boolean);
+
+  return (
+    <div className="bmb-ask-box">
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 10 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <Spark />
+          <span className="bmb-eyebrow" style={{ color: C.ink }}>Ask about these bands</span>
+        </div>
+        <button className="bmb-link" onClick={onClose} style={{ fontSize: 13 }}>Close</button>
+      </div>
+
+      <textarea
+        ref={inputRef}
+        className="bmb-ask-in"
+        value={q}
+        placeholder="Describe what you need — a style, a city, a budget, or just what you are worried about."
+        onChange={(e) => setQ(e.target.value)}
+        onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) run(); }}
+      />
+
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 7, margin: "11px 0 13px" }}>
+        {EXAMPLES.map((x) => (
+          <button key={x} className="bmb-chip" onClick={() => fresh(x)} disabled={busy}>{x}</button>
+        ))}
+      </div>
+
+      {facets.length > 0 && (
+        <div className="bmb-meta" style={{ marginBottom: 11 }}>
+          Also using: {facets.join(" · ")}
+          <button className="bmb-link" style={{ fontSize: 12.5, marginLeft: 9 }}
+            onClick={() => fresh(q)}>clear</button>
+        </div>
+      )}
+
+      <button className="bmb-btn" onClick={() => fresh(q)} disabled={busy || !q.trim()}
+        style={busy || !q.trim() ? { opacity: 0.55, cursor: "not-allowed" } : undefined}>
+        {busy ? "Reading the reviews…" : "Ask"}
+      </button>
+
+      {busy && (
+        <div className="bmb-dots" style={{ marginTop: 14 }} aria-live="polite">
+          <span /><span /><span />
+        </div>
+      )}
+
+      {err && <p className="bmb-error">{err}</p>}
+
+      {res?.clarify && (
+        <div style={{ marginTop: 18 }} aria-live="polite">
+          <p className="bmb-answer" style={{ marginBottom: 12 }}>{res.clarify.question}</p>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
+            {res.clarify.options.map((opt) => (
+              <button key={opt} className="bmb-chip" disabled={busy}
+                onClick={() => answerClarify(res.clarify.key, opt)}>{opt}</button>
+            ))}
+          </div>
+          <p className="bmb-note" style={{ marginTop: 12 }}>
+            One answer is usually enough to get to real results.
+          </p>
+        </div>
+      )}
+
+      {res && !res.clarify && (
+        <div style={{ marginTop: 16 }} aria-live="polite">
+          <p className="bmb-answer">{res.answer}</p>
+
+          {res.caveat && <div className="bmb-caveat">{res.caveat}</div>}
+
+          {cited.length > 0 && (
+            <div style={{ marginTop: 16 }}>
+              <div className="bmb-eyebrow" style={{ marginBottom: 9 }}>
+                {cited.length === 1 ? "The band it read" : "The bands it read"}
+              </div>
+              {cited.map((band) => {
+                const a = assess(band);
+                return (
+                  <button key={band.id}
+                    className={"bmb-card" + (a.tier === "flagged" ? " bmb-card--flagged" : "")}
+                    onClick={() => onOpenBand(band.id)}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "baseline" }}>
+                      <h2 className="bmb-h2" style={{ fontSize: 18 }}>{band.name}</h2>
+                      <span style={{ fontFamily: FONT_DATA, fontSize: 13, whiteSpace: "nowrap" }}>
+                        {inr(band.price.performance)}
+                      </span>
+                    </div>
+                    <div className="bmb-meta" style={{ margin: "4px 0 9px" }}>{band.kind}</div>
+                    <Signal a={a} compact />
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          <p className="bmb-note" style={{ marginTop: 12 }}>
+            Answered only from the {SEED.length} bands and their reviews in this demo — it cannot
+            reach anything else, and it will say so rather than guess.
+          </p>
+
+          {!ASK_IS_LIVE && (
+            <div className="bmb-demo">
+              No answer endpoint configured, so this reply is composed locally from the same retrieved
+              facts rather than by a model. Set VITE_ASK_ENDPOINT to route questions through Claude.
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ---------- screens ---------- */
 
 const CITIES = ["All cities", "Delhi NCR", "Jaipur", "Mumbai", "Chandigarh", "Lucknow"];
 
-function Search({ date, setDate, city, setCity, onSearch }) {
+function Search({ date, setDate, city, setCity, onSearch, onOpenBand }) {
+  const [asking, setAsking] = useState(false);
+
   return (
     <div className="bmb-rise">
       <div className="bmb-eyebrow">Wedding season 2026</div>
@@ -716,6 +703,16 @@ function Search({ date, setDate, city, setCity, onSearch }) {
         Every price below is broken into the same line items, so you can actually compare them.
         Availability is checked against the band's calendar, not promised in a reply three days later.
       </p>
+
+      {asking ? (
+        <Ask date={date} onOpenBand={onOpenBand} onClose={() => setAsking(false)} />
+      ) : (
+        <button className="bmb-ask-open" onClick={() => setAsking(true)}>
+          <Spark size={19} />
+          <span>Not sure where to start? Describe what you need.</span>
+        </button>
+      )}
+
       <div style={{ marginBottom: 16 }}>
         <label className="bmb-label" htmlFor="bmb-date">Your date</label>
         <input id="bmb-date" className="bmb-input" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
@@ -1080,7 +1077,9 @@ export default function BookMyBand() {
           </div>
           <div style={{ paddingTop: 22 }}>
             {screen === "search" && (
-              <Search date={date} setDate={setDate} city={city} setCity={setCity} onSearch={() => setScreen("results")} />
+              <Search date={date} setDate={setDate} city={city} setCity={setCity}
+                onSearch={() => setScreen("results")}
+                onOpenBand={(id) => { setOpenId(id); setScreen("band"); }} />
             )}
             {screen === "results" && (
               <Results date={date} city={city} onBack={() => setScreen("search")}
