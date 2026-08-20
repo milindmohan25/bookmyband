@@ -1,0 +1,21 @@
+# Netlify build + function config.
+#
+# Secrets do NOT go here — this file is committed. Set GROQ_API_KEY (or
+# ANTHROPIC_API_KEY) under Site configuration → Environment variables,
+# where it stays out of the repo and out of the client bundle.
+
+[build]
+  command = "npm run build"
+  publish = "dist"
+  functions = "netlify/functions"
+
+[build.environment]
+  # The function uses Response.json() and ESM dynamic import.
+  NODE_VERSION = "20"
+
+# Single-page app: serve index.html for anything that is not a real file
+# or a function, so a deep link does not 404.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
