@@ -4,6 +4,7 @@ import {
   getProfile, saveProfile, listEnquiries, createEnquiry,
 } from "./lib/backend";
 import { Piece, CUES, AUTHORED_TOTAL, FIELDS } from "./components/BootLogo.jsx";
+import Welcome from "./components/Welcome.jsx";
 import { SEED, GATE, assess as assessBand } from "./lib/seed.js";
 import { ask, ASK_IS_LIVE } from "./lib/ask.js";
 
@@ -1059,8 +1060,14 @@ export default function BookMyBand() {
   return (
     <div className="bmb">
       <style>{CSS}</style>
-      {screen === "boot" && <Boot onDone={() => setScreen("search")} />}
-      {screen !== "boot" && (
+      {screen === "boot" && <Boot onDone={() => setScreen("welcome")} />}
+      {screen === "welcome" && (
+        <Welcome
+          onStart={() => setScreen("search")}
+          onLogin={() => { setScreen("search"); setAuth({ reason: null }); }}
+        />
+      )}
+      {screen !== "boot" && screen !== "welcome" && (
         <div className="bmb-wrap">
           <div className="bmb-topbar">
             <button className="bmb-logo" onClick={() => setScreen("search")}
