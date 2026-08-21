@@ -27,7 +27,15 @@ import { retrieve } from "../../src/lib/retrieve.js";
 
 const GROQ_KEY = process.env.GROQ_API_KEY;
 const GROQ_URL = process.env.GROQ_BASE_URL || "https://api.groq.com/openai/v1";
-const GROQ_MODEL = process.env.GROQ_MODEL || "llama-3.3-70b-versatile";
+// Groq retires models regularly, so treat this default as a starting
+// point, not a guarantee. If a request comes back model_not_found, list
+// what the key can actually reach:
+//   curl -s https://api.groq.com/openai/v1/models \
+//     -H "Authorization: Bearer $GROQ_API_KEY" | grep -o '"id":"[^"]*"'
+// Pick an instruction-following model. Avoid groq/compound* — those
+// carry built-in web search, and an answer here must come only from the
+// seed records.
+const GROQ_MODEL = process.env.GROQ_MODEL || "openai/gpt-oss-120b";
 
 /* The abstention rules are the product, not a nicety: someone is
    about to pay a non-refundable deposit on the strength of this. */
