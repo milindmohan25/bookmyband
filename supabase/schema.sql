@@ -1,77 +1,91 @@
--- BookMyBand — auth-adjacent schema.
--- Paste into Supabase Studio → SQL Editor → Run.
+-- BookMyBand — catalogue and booking schema.
+-- Paste into Supabase Studio → SQL Editor → Run, then run seed.sql.
 --
--- auth.users is managed by Supabase and is not touched here. These two
--- tables hang off it. Bands, prices and reviews deliberately stay as
--- seed JSON in the bundle: they are authored content, not user writes,
--- and putting them in Postgres would buy nothing.
+-- Superseded from an earlier auth-oriented schema (profiles + enquiries,
+-- gated behind Google OAuth / a passwordless email link — see git history
+-- if that flow is ever wanted back). This version treats a booking as a
+-- guest submission: the required contact details travel in the booking
+-- row itself, validated by booking-schema.ts, so nobody has to create an
+-- account to ask a band to hold a date.
 
 -- ------------------------------------------------------------------
--- profiles: the name and number a band needs in order to reply
+-- bands: the catalogue. Public, read-only from the client's point of
+-- view — there is no user-writable path to this table.
 -- ------------------------------------------------------------------
 
-create table if not exists public.profiles (
-  id          uuid primary key references auth.users on delete cascade,
-  name        text not null check (char_length(trim(name)) >= 2),
-  phone       text check (phone ~ '^[6-9][0-9]{9}$'),
-  email       text,
-  created_at  timestamptz not null default now(),
-  updated_at  timestamptz not null default now()
+create extension if not exists pgcrypto;
+
+create table if not exists public.bands (
+  id                    uuid primary key default gen_random_uuid(),
+  slug                  text unique not null,
+  name                  text not null,
+  city                  text not null,
+  genres                text[] not null default '{}',
+  occasions             text[] not null default '{}',
+  description           text not null default '',
+  notable_performances  text,
+  members_count         integer not null default 0,
+  rating                numeric(2,1) not null default 0,
+  featured              boolean not null default false,
+
+  -- price_per_event is the flat number a listing card sorts/filters
+  -- on; price_breakdown is the full seven-line-item quote (the
+  -- "standardised price breakdown" feature) plus advance/refund/
+  -- contract terms — same shape as the old SEED price object.
+  price_per_event       integer not null,
+  price_breakdown       jsonb not null default '{}'::jsonb,
+
+  -- booked: ISO dates already spoken for, checked against the date a
+  -- visitor searches. reviews: hand-tagged {author,date,text,
+  -- reliability,flag}[] — the Reliability Signal is computed from
+  -- these at request time, deterministically, not stored as a score.
+  booked                date[] not null default '{}',
+  reviews               jsonb not null default '[]'::jsonb,
+
+  created_at            timestamptz not null default now()
 );
 
-comment on column public.profiles.phone is
-  '10-digit Indian mobile, no +91. Collected for band callbacks, NOT used for auth.';
+alter table public.bands enable row level security;
 
-alter table public.profiles enable row level security;
+create policy "public can read bands" on public.bands
+  for select using (true);
 
-create policy "read own profile"   on public.profiles for select using  (auth.uid() = id);
-create policy "insert own profile" on public.profiles for insert with check (auth.uid() = id);
-create policy "update own profile" on public.profiles for update using  (auth.uid() = id)
-                                                            with check (auth.uid() = id);
+-- Deliberately no insert/update/delete policy for the anonymous role.
+-- The catalogue is authored content, not user writes; changing it
+-- means running SQL with the secret key, not a client request.
 
 -- ------------------------------------------------------------------
--- enquiries: which band, which date, and the total they were quoted
+-- bookings: a guest's request to hold a date. Insert-only from the
+-- client's point of view — a booking carries a phone number, so
+-- reading it back requires the secret key from an admin context,
+-- never the publishable key the app ships with.
 -- ------------------------------------------------------------------
 
-create table if not exists public.enquiries (
-  id            bigint generated always as identity primary key,
-  user_id       uuid not null references auth.users on delete cascade,
-  band_id       text not null,
-  event_date    date not null,
-  quoted_total  integer,
-  created_at    timestamptz not null default now(),
-
-  -- one enquiry per band per date. Makes the client's upsert idempotent,
-  -- so a double tap on a slow connection cannot send twice.
-  unique (user_id, band_id, event_date)
+create table if not exists public.bookings (
+  id           uuid primary key default gen_random_uuid(),
+  band_id      uuid not null references public.bands(id),
+  event_date   date not null,
+  occasion     text not null,
+  venue_city   text not null,
+  guest_name   text not null,
+  guest_phone  text not null check (guest_phone ~ '^[6-9][0-9]{9}$'),
+  guest_email  text,
+  notes        text,
+  created_at   timestamptz not null default now()
 );
 
-comment on column public.enquiries.quoted_total is
-  'Rupees shown in the standardised breakdown at enquiry time. Frozen on purpose: the whole product promise is that a quote cannot quietly change afterwards.';
+comment on column public.bookings.guest_phone is
+  '10-digit Indian mobile, no +91. Collected so the band can call back — not a credential, and there is no login here at all.';
 
-create index if not exists enquiries_user_created_idx
-  on public.enquiries (user_id, created_at desc);
+create index if not exists bookings_band_created_idx
+  on public.bookings (band_id, created_at desc);
 
-alter table public.enquiries enable row level security;
+alter table public.bookings enable row level security;
 
-create policy "read own enquiries"   on public.enquiries for select using  (auth.uid() = user_id);
-create policy "insert own enquiries" on public.enquiries for insert with check (auth.uid() = user_id);
+create policy "public can send a booking" on public.bookings
+  for insert with check (true);
 
--- Deliberately no update or delete policy. An enquiry is a record of
--- what was quoted; letting either side edit it after the fact would
--- defeat the point of storing quoted_total.
-
--- ------------------------------------------------------------------
--- keep updated_at honest
--- ------------------------------------------------------------------
-
-create or replace function public.touch_updated_at()
-returns trigger language plpgsql as $$
-begin
-  new.updated_at = now();
-  return new;
-end $$;
-
-drop trigger if exists profiles_touch on public.profiles;
-create trigger profiles_touch before update on public.profiles
-  for each row execute function public.touch_updated_at();
+-- No select/update/delete policy for the anonymous role. Reading the
+-- booking list back (to actually run the business) is a job for the
+-- secret key from a trusted context, not something the published
+-- publishable key should ever be able to do.

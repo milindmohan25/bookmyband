@@ -19,3 +19,13 @@ venv/
 
 # workaround artefacts — patches are a transport, not project files
 *.patch
+
+# Local Netlify folder
+.netlify
+
+# TanStack Start build artefacts
+.nitro
+.tanstack
+.output
+.vinxi
+dist-ssr

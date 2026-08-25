@@ -1,5 +1,4 @@
 import React, { useState, useEffect, useMemo } from "react";
-import { SEED } from "../lib/seed.js";
 
 /* ============================================================
    Welcome — the screen between the boot animation and search.
@@ -108,7 +107,7 @@ const CSS = `
 }
 `;
 
-export default function Welcome({ onStart, onLogin }) {
+export default function Welcome({ bands, onStart, onLogin }) {
   const [idx, setIdx] = useState(0);
   // Bumped every advance so the ken-burns and bar-fill animations
   // restart via a changed key rather than needing to be reset.
@@ -125,8 +124,8 @@ export default function Welcome({ onStart, onLogin }) {
   // The cities the catalogue can actually serve, not a hardcoded list
   // that quietly drifts from the seed data.
   const cities = useMemo(
-    () => [...new Set(SEED.map((b) => b.city))].sort((a, b) => a.localeCompare(b)),
-    []
+    () => [...new Set(bands.map((b) => b.city))].sort((a, b) => a.localeCompare(b)),
+    [bands]
   );
 
   return (

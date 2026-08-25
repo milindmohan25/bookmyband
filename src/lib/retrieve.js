@@ -211,10 +211,14 @@ export function factSheet({ band, a, free }, date) {
   ].filter(Boolean).join("\n");
 }
 
-/* Top-k bands for a query, with the context block the model sees. */
-export function retrieve(query, { date = null, k = 4 } = {}) {
+/* Top-k bands for a query, with the context block the model sees.
+   `bands` defaults to the local seed set, but the concierge server
+   function passes in whatever listBands() returned — Supabase rows
+   when a project is configured, the same seed set otherwise — so
+   retrieval always reads from exactly what the UI is showing. */
+export function retrieve(query, { date = null, k = 4, bands = SEED } = {}) {
   const intent = readIntent(query);
-  const ranked = SEED
+  const ranked = bands
     .map((b) => scoreBand(b, query, intent, date))
     .sort((x, y) => y.score - x.score);
 

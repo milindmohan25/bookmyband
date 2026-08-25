@@ -50,53 +50,58 @@ Evidence volume gates which tier is even reachable. A band cannot earn a positiv
 
 ## Ask — the RAG feature
 
-The search page opens with a plain-language box: *"brass band for a baraat in Delhi under ₹1 lakh"*, or the question the product is really about — *"which of these has actually turned up on the day?"*
+The search page opens with a plain-language box: *"brass band for a baraat in Delhi under ₹1 lakh"*, or the question the product is really about — *"which of these has actually turned up on the day?"* It's a real chat now, not a one-shot lookup: a question the catalogue can't place gets a follow-up as the next reply instead of a dead end, and the conversation carries forward.
 
-**Retrieval** runs in the browser over the seed set (`src/lib/retrieve.js`). No vector store and no embedding call: eight bands with hand-tagged reviews is a scoring problem, not a search-infrastructure problem, and keeping it local means retrieval cannot leak, cost anything, or fail. It reads city, style, budget (including "1 lakh" and "80k"), size and reliability intent, then emits a compact fact sheet per band — prices, terms, tier, and the reviews that carry reliability evidence.
+**Retrieval** (`src/lib/retrieve.js`) runs server-side, over whatever the catalogue server function returns — Supabase when configured, the same hand-tagged seed set otherwise. No vector store and no embedding call: eight bands with hand-tagged reviews is a scoring problem, not a search-infrastructure problem. It reads city, style, budget (including "1 lakh" and "80k"), size and reliability intent, then emits a compact fact sheet per band — prices, terms, tier, and the reviews that carry reliability evidence.
 
-**Generation** is a single structured call over those fact sheets only, so the model cannot invent a band, a price or a review. Either provider works, picked by whichever key the function finds — `GROQ_API_KEY` (Groq's OpenAI-compatible `chat/completions`) or `ANTHROPIC_API_KEY` (Claude). Same prompt, same JSON contract, same guarantees. The abstention rules from the tier table are enforced in the system prompt and again in code: a flagged band is reported every time it is mentioned, "Limited Info" is never softened into "seems fine", and band ids the model returns are filtered against what was actually retrieved. A question that matches nothing is answered without calling the model at all.
+**Generation** (`src/lib/concierge.server.ts`) is a single structured call over those fact sheets only, so the model cannot invent a band, a price or a review. Either provider works, picked by whichever key is set — `GROQ_API_KEY` (Groq's OpenAI-compatible `chat/completions`) or `ANTHROPIC_API_KEY` (Claude). The abstention rules from the tier table are enforced in the system prompt and again in code: a flagged band is reported every time it is mentioned, "Limited Info" is never softened into "seems fine", and band ids the model returns are filtered against what was actually retrieved. A question that matches nothing is answered without calling the model at all — and if a follow-up goes unresolved twice, the concierge shows the best-evidenced bands rather than asking a third time.
 
-**The key never reaches the browser.** A static site cannot hold a secret, so the call lives in `netlify/functions/ask.js` and the client sends only a question — never context, so a crafted request cannot feed the model invented facts. With no endpoint configured the same retrieved facts are read out by a deterministic local answerer, and the UI says so on screen rather than passing it off as a model.
+**The key never reaches the browser.** `concierge.server.ts` and `catalog.server.ts` are server-only modules (TanStack Start's `createServerFn` compiles them out of the client bundle entirely) — the browser calls `askConcierge`/`getBands` as RPCs and never sees a key. With no model key configured, the same retrieved facts are read out by a deterministic local composer, and the UI says so on screen rather than passing it off as a model.
+
+## Booking
+
+There's no account system. A booking request is a guest submission — name, phone, occasion and venue city travel in the booking row itself (`booking-schema.ts`, validated by Zod both client-side for instant feedback and server-side as the authoritative check), so nobody has to sign in before a band can be asked to hold a date. The booking table has no public read policy: only the secret key, from a trusted context, can read a submitted booking back.
+
+*(An earlier version of this app gated enquiries behind Google OAuth / a passwordless email link, storing them in `profiles`/`enquiries` tables — see git history if that flow is wanted back. It was replaced when the app moved to a real catalogue + booking backend, since the new booking schema is guest-first by design.)*
 
 ## Stack
 
-- Frontend: React (Vite)
+- Frontend: React 19, server-rendered via TanStack Start (file-based routes, `createServerFn` for all server work)
+- Data: Zod for schema validation, shared between client-side instant feedback and server-side authoritative checks
+- Catalogue/bookings: Supabase (Postgres, RLS, new-style `sb_publishable_`/`sb_secret_` keys) — falls back to the same hand-authored seed set with no project configured, so the demo never goes dark for missing infrastructure
 - AI: Groq or the Anthropic API, one structured call per question, retrieval-grounded — see above
-- Auth/data: Supabase (Google OAuth + passwordless email, Postgres with row-level security) for profiles and enquiries; falls back to an in-memory store with no keys set — see [AUTH.md](./AUTH.md)
-- Bands, prices and reviews: local JSON seed set (authored content, not user writes — no DB needed for these)
-- Hosting: static deploy
+- Hosting: Netlify, via `@netlify/vite-plugin-tanstack-start` (builds the server functions into Netlify Functions automatically)
 
 ## Running locally
 
 ```
 npm install
-npm run dev       # dev server
+npm run dev       # dev server on :3000
 npm run build     # production build to dist/
 npm run preview   # preview the production build
 ```
 
-No Supabase keys are required to run the app — sign-in and enquiries work against an in-memory mock automatically. To use a real Supabase project instead, copy `.env.example` to `.env.local` and follow [AUTH.md](./AUTH.md).
+No Supabase project is required to run the app — the catalogue and booking server functions fall back to the seed set and a console-logged mock respectively. To use a real project, run `supabase/schema.sql` then `supabase/seed.sql` against it, and copy `.env.example` to `.env.local` with the project's URL and publishable key.
 
 ## Repo layout
 
 ```
-index.html
 .env.example
-AUTH.md             # Supabase setup, and why phone OTP was rejected
 supabase/
-  schema.sql        # profiles + enquiries tables, RLS policies
-netlify/functions/
-  ask.js            # the only place the Anthropic key exists
+  schema.sql        # bands + bookings tables, RLS policies
+  seed.sql          # the 8 hand-authored bands, generated from src/lib/seed.js
 src/
-  main.jsx          # entry point
-  App.jsx           # screens: search + ask, results, band detail, account
+  router.tsx, routes/            # TanStack Start routing + root document
+  App.jsx           # screens: welcome, search + ask, results, band detail, booking
   lib/
-    seed.js         # the bands, their reviews, and the tier assessment
-    retrieve.js     # local retrieval + fact sheets (the R in RAG)
-    ask.js          # calls the endpoint, or answers locally with no keys set
-    backend.js      # Supabase client over plain fetch, with an in-memory fallback
+    seed.js                   # the bands, their reviews, and the tier assessment
+    retrieve.js                # retrieval + fact sheets (the R in RAG)
+    catalog.server.ts / .functions.ts   # public band reads (Supabase or seed fallback)
+    booking-schema.ts / .server.ts / .functions.ts   # guest booking submissions
+    chat.functions.ts / concierge.server.ts          # the Ask feature's server side
   components/
     BootLogo.jsx    # animated splash screen, played once as the boot screen
+    Welcome.jsx     # the screen between the boot animation and search
 ```
 
 ## Notes
