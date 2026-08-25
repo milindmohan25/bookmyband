@@ -19,9 +19,15 @@
 
 const R = (author, date, text, reliability, flag) => ({ author, date, text, reliability, flag: flag || null });
 
+/* `dbId`: a stable, hand-picked uuid standing in for what would be
+   each row's real Postgres primary key. bookingInputSchema requires a
+   uuid, and the seed set has no live database to draw one from — so
+   it carries its own, fixed once here rather than generated fresh on
+   every request. */
 export const SEED = [
   {
     id: "sitara",
+    dbId: "8a2f1b10-0001-4a3e-9c2d-1a2b3c4d5e01",
     name: "Sitara Sound Collective",
     city: "Delhi NCR",
     kind: "10-piece live band · Hindi, Punjabi, retro",
@@ -46,6 +52,7 @@ export const SEED = [
   },
   {
     id: "marigold",
+    dbId: "8a2f1b10-0002-4a3e-9c2d-1a2b3c4d5e02",
     name: "The Marigold Brass Co.",
     city: "Delhi NCR",
     kind: "14-piece baraat brass · processional, dhol",
@@ -73,6 +80,7 @@ export const SEED = [
   },
   {
     id: "anhad",
+    dbId: "8a2f1b10-0003-4a3e-9c2d-1a2b3c4d5e03",
     name: "Anhad Live",
     city: "Jaipur",
     kind: "6-piece live band · Sufi, ghazal, acoustic",
@@ -91,6 +99,7 @@ export const SEED = [
   },
   {
     id: "baaraat",
+    dbId: "8a2f1b10-0004-4a3e-9c2d-1a2b3c4d5e04",
     name: "Baaraat Beats Bandwalla",
     city: "Delhi NCR",
     kind: "12-piece band + brass · Bollywood, bhangra",
@@ -114,6 +123,7 @@ export const SEED = [
   },
   {
     id: "nauras",
+    dbId: "8a2f1b10-0005-4a3e-9c2d-1a2b3c4d5e05",
     name: "Nauras Ensemble",
     city: "Mumbai",
     kind: "8-piece live band · jazz, retro Bollywood",
@@ -136,6 +146,7 @@ export const SEED = [
   },
   {
     id: "rangeen",
+    dbId: "8a2f1b10-0006-4a3e-9c2d-1a2b3c4d5e06",
     name: "Rangeen Roadshow",
     city: "Chandigarh",
     kind: "9-piece band · pop, bhangra, DJ hybrid",
@@ -162,6 +173,7 @@ export const SEED = [
   },
   {
     id: "qissa",
+    dbId: "8a2f1b10-0007-4a3e-9c2d-1a2b3c4d5e07",
     name: "Qissa Qawwali Party",
     city: "Lucknow",
     kind: "7-piece qawwali party · traditional",
@@ -179,6 +191,7 @@ export const SEED = [
   },
   {
     id: "dhun",
+    dbId: "8a2f1b10-0008-4a3e-9c2d-1a2b3c4d5e08",
     name: "Dhun Sangam Orchestra",
     city: "Delhi NCR",
     kind: "16-piece orchestra · film songs, live strings",

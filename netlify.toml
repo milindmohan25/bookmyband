@@ -1,0 +1,21 @@
+# Netlify build config for the TanStack Start app.
+#
+# Secrets do NOT go here — this file is committed. Set GROQ_API_KEY (or
+# ANTHROPIC_API_KEY) and SUPABASE_URL / SUPABASE_PUBLISHABLE_KEY under
+# Site configuration → Environment variables, where they stay out of
+# the repo and out of the client bundle. There are no netlify/functions
+# here anymore — @netlify/vite-plugin-tanstack-start builds the server
+# functions (askConcierge, getBands, bookBand) into Netlify Functions
+# itself as part of `vite build`.
+
+[build]
+  command = "vite build"
+  publish = "dist/client"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+[dev]
+  command = "npm run dev"
+  targetPort = 3000
+  port = 8888
