@@ -14,7 +14,8 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.117.1",
-    "@supabase/supabase-js": "^2.112.4",
+    "@supabase/ssr": "^0.12.7",
+    "@supabase/supabase-js": "^2.116.0",
     "@tanstack/react-router": "^1.170.32",
     "@tanstack/react-start": "^1.168.49",
     "react": "^19.2.0",
