@@ -1,22 +1,17 @@
 import React, { useState, useEffect, useRef, useMemo } from "react";
+import {
+  IS_LIVE, getSession, consumeRedirect, signInWithGoogle, sendEmailLink, signOut,
+  getProfile, saveProfile, listEnquiries, createEnquiry,
+} from "./lib/backend";
 import { Piece, CUES, AUTHORED_TOTAL, FIELDS } from "./components/BootLogo.jsx";
-import Welcome from "./components/Welcome.jsx";
-import { GATE, assess as assessBand } from "./lib/seed.js";
-import { askConcierge } from "./lib/chat.functions.ts";
-import { bookBand } from "./lib/booking.functions.ts";
-import { bookingInputSchema } from "./lib/booking-schema.ts";
+import { SEED, GATE, assess as assessBand } from "./lib/seed.js";
+import { ask, ASK_IS_LIVE } from "./lib/ask.js";
 
 /* ============================================================
-   BookMyBand — working demo, no model in the loop for the local
-   fallback. Reliability tiers are computed by pure functions from
-   hand-tagged review metadata read from the catalogue (Supabase when
-   configured, the same hand-authored seed set otherwise — see
-   catalog.server.ts). Same UI contract either way: evidence volume
-   gates which tier is reachable.
-
-   Bands arrive as a prop (fetched server-side by the index route via
-   getBands()) rather than a module-level import, since the source of
-   truth is now a server function, not a bundled constant.
+   BookMyBand — working demo, no model in the loop.
+   Reliability tiers are computed by pure functions from
+   hand-tagged review metadata in SEED. Same UI contract as the
+   AI version: evidence volume gates which tier is reachable.
    ============================================================ */
 
 /* ---------- tokens ---------- */
@@ -297,16 +292,15 @@ const BOOT_SPEED = 1.7;                  // the authored timeline is ~8s; a spla
 
 function Boot({ onDone }) {
   const [T, setT] = useState(0);
-  // Always starts at the authored reference size — matching what the
-  // server rendered, so hydration has nothing to reconcile — then
-  // corrects to the real viewport in an effect, after mount.
-  const [vp, setVp] = useState({ w: BOOT_DESIGN.w, h: BOOT_DESIGN.h });
+  const [vp, setVp] = useState(() => ({
+    w: typeof window === "undefined" ? BOOT_DESIGN.w : window.innerWidth,
+    h: typeof window === "undefined" ? BOOT_DESIGN.h : window.innerHeight,
+  }));
   const done = useRef(false);
   const finish = () => { if (!done.current) { done.current = true; onDone(); } };
 
   useEffect(() => {
     const onResize = () => setVp({ w: window.innerWidth, h: window.innerHeight });
-    onResize();
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);
@@ -354,86 +348,166 @@ function Boot({ onDone }) {
   );
 }
 
-/* ---------- booking ----------
-   A booking request is a guest submission: name, phone and the event
-   details travel in the booking row itself (booking-schema.ts), so
-   nobody has to create an account before a band can be asked to hold
-   a date. Validated the same way twice — instantly here for feedback,
-   authoritatively again in booking.functions.ts — because the client
-   check is a courtesy and the server check is the actual rule.
+/* ---------- auth ----------
+   Identity comes from Supabase (Google OAuth, or a passwordless email
+   link). The phone number is a profile field, not a credential: bands
+   need a number to ring, but verifying it by SMS costs money per login
+   and requires TRAI DLT registration in India. Wrong trade for a
+   once-in-a-lifetime purchase.
 */
 
-function BookingDialog({ band, date, onClose, onSent }) {
-  const [form, setForm] = useState({
-    occasion: "", venueCity: band.city, guestName: "", guestPhone: "", guestEmail: "", notes: "",
-  });
+const validPhone = (p) => /^[6-9]\d{9}$/.test(p);
+
+function Auth({ reason, onClose, onSignedIn }) {
+  const [step, setStep] = useState("choose"); // choose | email-sent | busy
+  const [email, setEmail] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const set = (key) => (e) => { setForm((f) => ({ ...f, [key]: e.target.value })); setErr(""); };
+  const google = async () => {
+    setBusy(true); setErr("");
+    try {
+      const r = await signInWithGoogle();
+      if (r?.mocked) onSignedIn();           // no keys: straight through
+    } catch (e) {
+      setErr(e.message || "Google sign-in did not start. Try the email link instead.");
+      setBusy(false);
+    }
+  };
 
-  const send = async () => {
-    const candidate = { bandId: band.dbId, eventDate: date, ...form };
-    const parsed = bookingInputSchema.safeParse(candidate);
-    if (!parsed.success) {
-      setErr(parsed.error.issues[0]?.message || "Check the details below.");
+  const emailLink = async () => {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email)) {
+      setErr("That address is missing something — check for a typo before we send the link.");
       return;
     }
     setBusy(true); setErr("");
     try {
-      await bookBand({ data: parsed.data });
-      onSent();
+      const r = await sendEmailLink(email);
+      if (r?.mocked) { onSignedIn(); return; }
+      setStep("email-sent");
     } catch (e) {
-      setErr(e.message || "That did not send. Try again in a moment.");
+      setErr(e.message || "The link could not be sent. Check the address, or use Google instead.");
+    }
+    setBusy(false);
+  };
+
+  return (
+    <div className="bmb-scrim" onClick={onClose}>
+      <div className="bmb-sheet" role="dialog" aria-modal="true" aria-label="Sign in" onClick={(e) => e.stopPropagation()}>
+        {step === "choose" && (
+          <>
+            <h2 className="bmb-h2" style={{ margin: "0 0 6px" }}>Sign in to send this</h2>
+            <p className="bmb-note" style={{ marginBottom: 18 }}>
+              {reason || "One account, whether you have been here before or not. No password to remember."}
+            </p>
+
+            <button className="bmb-btn bmb-btn--ghost" onClick={google} disabled={busy}
+              style={{ marginBottom: 16, fontWeight: 600 }}>
+              <svg width="17" height="17" viewBox="0 0 18 18" aria-hidden="true">
+                <path fill="#4285F4" d="M17.6 9.2c0-.6-.1-1.2-.2-1.8H9v3.4h4.8a4.1 4.1 0 0 1-1.8 2.7v2.2h2.9c1.7-1.5 2.7-3.8 2.7-6.5z" />
+                <path fill="#34A853" d="M9 18c2.4 0 4.5-.8 6-2.2l-2.9-2.2c-.8.5-1.8.9-3.1.9-2.4 0-4.4-1.6-5.1-3.8H1v2.3A9 9 0 0 0 9 18z" />
+                <path fill="#FBBC05" d="M3.9 10.7a5.4 5.4 0 0 1 0-3.4V5H1a9 9 0 0 0 0 8l2.9-2.3z" />
+                <path fill="#EA4335" d="M9 3.6c1.3 0 2.5.5 3.4 1.3l2.6-2.6A9 9 0 0 0 1 5l2.9 2.3C4.6 5.1 6.6 3.6 9 3.6z" />
+              </svg>
+              Continue with Google
+            </button>
+
+            <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "0 0 16px" }}>
+              <div style={{ flex: 1, height: 1, background: C.rule }} />
+              <span className="bmb-eyebrow">or</span>
+              <div style={{ flex: 1, height: 1, background: C.rule }} />
+            </div>
+
+            <label className="bmb-label" htmlFor="bmb-email">Email</label>
+            <input id="bmb-email" className="bmb-input" type="email" autoComplete="email"
+              value={email} placeholder="you@example.in"
+              onChange={(e) => { setEmail(e.target.value); setErr(""); }}
+              onKeyDown={(e) => e.key === "Enter" && emailLink()} />
+            {err && <p className="bmb-error">{err}</p>}
+            <div style={{ marginTop: 14 }}>
+              <button className="bmb-btn" onClick={emailLink} disabled={busy}>
+                {busy ? "Working…" : "Email me a sign-in link"}
+              </button>
+            </div>
+
+            {!IS_LIVE && (
+              <div className="bmb-demo">
+                No Supabase keys found, so this is running against the in-memory store. Either button signs you
+                straight in. Add VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY to use the real thing.
+              </div>
+            )}
+          </>
+        )}
+
+        {step === "email-sent" && (
+          <>
+            <h2 className="bmb-h2" style={{ margin: "0 0 6px" }}>Check {email}</h2>
+            <p className="bmb-note">
+              The link signs you in and brings you back to this page. It works once and expires in an hour.
+              Nothing was sent to your number and no password was created.
+            </p>
+            <div style={{ marginTop: 18 }}>
+              <button className="bmb-btn bmb-btn--ghost" onClick={() => setStep("choose")}>Use a different address</button>
+            </div>
+          </>
+        )}
+
+        <div style={{ marginTop: 16, textAlign: "center" }}>
+          <button className="bmb-link" onClick={onClose}>Keep browsing without an account</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* Collected after identity is established, because a band cannot reply
+   to an email address at 11pm the night before a wedding. */
+function PhoneStep({ session, onSaved, onSkip }) {
+  const [name, setName] = useState("");
+  const [phone, setPhone] = useState("");
+  const [err, setErr] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const save = async () => {
+    if (name.trim().length < 2) { setErr("Bands need a name to put on the enquiry."); return; }
+    if (!validPhone(phone)) { setErr("Enter a 10-digit Indian mobile, without +91 or spaces."); return; }
+    setBusy(true); setErr("");
+    try {
+      const p = await saveProfile(session.userId, { name: name.trim(), phone, email: session.email });
+      onSaved(p);
+    } catch (e) {
+      setErr(e.message || "That did not save. Try again in a moment.");
       setBusy(false);
     }
   };
 
   return (
-    <div className="bmb-scrim" onClick={onClose}>
-      <div className="bmb-sheet" role="dialog" aria-modal="true" aria-label={`Book ${band.name}`}
-        onClick={(e) => e.stopPropagation()}>
-        <div className="bmb-eyebrow">{prettyDate(date)}</div>
-        <h2 className="bmb-h2" style={{ margin: "6px 0 6px" }}>Ask {band.name} to hold this date</h2>
+    <div className="bmb-scrim">
+      <div className="bmb-sheet" role="dialog" aria-modal="true" aria-label="Your details">
+        <div className="bmb-eyebrow">Last step</div>
+        <h2 className="bmb-h2" style={{ margin: "8px 0 6px" }}>How should the band reach you?</h2>
         <p className="bmb-note" style={{ marginBottom: 18 }}>
-          No account needed. Your details go straight to the band with the price you saw — nothing is paid
-          and nothing is held until they confirm.
+          Your name and number go on the enquiry. Nothing else — no email list, and your number is never shown
+          publicly on the site.
         </p>
-
-        <label className="bmb-label" htmlFor="bmb-occasion">Occasion</label>
-        <input id="bmb-occasion" className="bmb-input" value={form.occasion} placeholder="Wedding reception"
-          style={{ marginBottom: 14 }} onChange={set("occasion")} />
-
-        <label className="bmb-label" htmlFor="bmb-venue">Venue city</label>
-        <input id="bmb-venue" className="bmb-input" value={form.venueCity} placeholder={band.city}
-          style={{ marginBottom: 14 }} onChange={set("venueCity")} />
-
-        <label className="bmb-label" htmlFor="bmb-name">Your name</label>
-        <input id="bmb-name" className="bmb-input" value={form.guestName} placeholder="Aarav Mehta"
-          style={{ marginBottom: 14 }} onChange={set("guestName")} />
-
-        <label className="bmb-label" htmlFor="bmb-phone">Mobile number</label>
-        <div className="bmb-phone" style={{ marginBottom: 14 }}>
+        <label className="bmb-label" htmlFor="bmb-pname">Your name</label>
+        <input id="bmb-pname" className="bmb-input" value={name} placeholder="Aarav Mehta"
+          style={{ marginBottom: 14 }}
+          onChange={(e) => { setName(e.target.value); setErr(""); }} />
+        <label className="bmb-label" htmlFor="bmb-pphone">Mobile number</label>
+        <div className="bmb-phone">
           <span>+91</span>
-          <input id="bmb-phone" className="bmb-input" style={{ borderRadius: "0 2px 2px 0" }}
-            type="tel" inputMode="numeric" maxLength={10} value={form.guestPhone} placeholder="98110 12345"
-            onChange={(e) => { setForm((f) => ({ ...f, guestPhone: e.target.value.replace(/\D/g, "") })); setErr(""); }} />
+          <input id="bmb-pphone" className="bmb-input" style={{ borderRadius: "0 2px 2px 0" }}
+            type="tel" inputMode="numeric" maxLength={10} value={phone} placeholder="98110 12345"
+            onChange={(e) => { setPhone(e.target.value.replace(/\D/g, "")); setErr(""); }}
+            onKeyDown={(e) => e.key === "Enter" && save()} />
         </div>
-
-        <label className="bmb-label" htmlFor="bmb-email2">Email (optional)</label>
-        <input id="bmb-email2" className="bmb-input" type="email" value={form.guestEmail}
-          placeholder="you@example.in" style={{ marginBottom: 14 }} onChange={set("guestEmail")} />
-
-        <label className="bmb-label" htmlFor="bmb-notes">Anything the band should know (optional)</label>
-        <textarea id="bmb-notes" className="bmb-ask-in" value={form.notes} placeholder="Guest count, timing, special requests…"
-          style={{ minHeight: 54 }} onChange={set("notes")} />
-
         {err && <p className="bmb-error">{err}</p>}
         <div style={{ marginTop: 18 }}>
-          <button className="bmb-btn" onClick={send} disabled={busy}>{busy ? "Sending…" : "Send booking request"}</button>
+          <button className="bmb-btn" onClick={save} disabled={busy}>{busy ? "Saving…" : "Save and continue"}</button>
         </div>
         <div style={{ marginTop: 14, textAlign: "center" }}>
-          <button className="bmb-link" onClick={onClose}>Cancel</button>
+          <button className="bmb-link" onClick={onSkip}>Not now</button>
         </div>
       </div>
     </div>
@@ -441,12 +515,10 @@ function BookingDialog({ band, date, onClose, onSent }) {
 }
 
 /* ---------- ask ----------
-   A real chat, not a one-shot lookup: askConcierge takes the message
-   plus the transcript so far, and retrieval + generation happen on
-   the server, over whatever listBands() returns. A question the
-   catalogue cannot answer gets a plain-language follow-up as the
-   next assistant turn rather than a dead end — the caller just keeps
-   talking. Either way the abstention rules hold: nothing is claimed
+   Plain-language questions answered from the seed set. Retrieval runs
+   locally; the wording comes from Claude when an answer endpoint is
+   configured, and from a deterministic reader of the same facts when
+   it is not. Either way the abstention rules hold: nothing is claimed
    that the reviews do not evidence, and a flag is never averaged away.
 */
 
@@ -468,31 +540,44 @@ const EXAMPLES = [
   "Is the cheapest one a risk?",
 ];
 
-function Ask({ bands, onOpenBand, onClose }) {
+function Ask({ date, onOpenBand, onClose }) {
   const [q, setQ] = useState("");
   const [busy, setBusy] = useState(false);
-  const [messages, setMessages] = useState([]); // {role, content, bandIds?, caveat?, live?}
+  const [res, setRes] = useState(null);
   const [err, setErr] = useState("");
+  // What the user has pinned down by answering follow-up questions.
+  const [facets, setFacets] = useState([]);
+  const [asked, setAsked] = useState([]);
   const inputRef = useRef(null);
 
   useEffect(() => { inputRef.current?.focus(); }, []);
 
-  const send = async (text) => {
+  const run = async (text, next = { facets, asked }) => {
     const question = (text ?? q).trim();
     if (!question || busy) return;
-    const history = messages.map((m) => ({ role: m.role, content: m.content }));
-    setMessages((prev) => [...prev, { role: "user", content: question }]);
-    setQ(""); setBusy(true); setErr("");
+    setQ(question); setBusy(true); setErr(""); setRes(null);
     try {
-      const res = await askConcierge({ data: { message: question, history } });
-      setMessages((prev) => [...prev, {
-        role: "assistant", content: res.answer, bandIds: res.bandIds, caveat: res.caveat, live: res.live,
-      }]);
+      setRes(await ask(question, { date, facets: next.facets, asked: next.asked }));
     } catch (e) {
       setErr(e.message || "That did not come back. Try again in a moment.");
     }
     setBusy(false);
   };
+
+  // Start over from the typed question, dropping anything pinned.
+  const fresh = (text) => { setFacets([]); setAsked([]); run(text, { facets: [], asked: [] }); };
+
+  // Answer the follow-up: fold it in and immediately try again.
+  const answerClarify = (key, option) => {
+    const nextFacets = [...facets, option];
+    const nextAsked = [...asked, key];
+    setFacets(nextFacets); setAsked(nextAsked);
+    run(q, { facets: nextFacets, asked: nextAsked });
+  };
+
+  // A follow-up question carries no bandIds — guard, or this throws
+  // before the render even reaches the clarify branch.
+  const cited = (res?.bandIds || []).map((id) => SEED.find((b) => b.id === id)).filter(Boolean);
 
   return (
     <div className="bmb-ask-box">
@@ -504,99 +589,111 @@ function Ask({ bands, onOpenBand, onClose }) {
         <button className="bmb-link" onClick={onClose} style={{ fontSize: 13 }}>Close</button>
       </div>
 
-      {messages.length === 0 && (
-        <div style={{ display: "flex", flexWrap: "wrap", gap: 7, marginBottom: 13 }}>
-          {EXAMPLES.map((x) => (
-            <button key={x} className="bmb-chip" onClick={() => send(x)} disabled={busy}>{x}</button>
-          ))}
+      <textarea
+        ref={inputRef}
+        className="bmb-ask-in"
+        value={q}
+        placeholder="Describe what you need — a style, a city, a budget, or just what you are worried about."
+        onChange={(e) => setQ(e.target.value)}
+        onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) run(); }}
+      />
+
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 7, margin: "11px 0 13px" }}>
+        {EXAMPLES.map((x) => (
+          <button key={x} className="bmb-chip" onClick={() => fresh(x)} disabled={busy}>{x}</button>
+        ))}
+      </div>
+
+      {facets.length > 0 && (
+        <div className="bmb-meta" style={{ marginBottom: 11 }}>
+          Also using: {facets.join(" · ")}
+          <button className="bmb-link" style={{ fontSize: 12.5, marginLeft: 9 }}
+            onClick={() => fresh(q)}>clear</button>
         </div>
       )}
 
-      {messages.map((m, i) => {
-        if (m.role === "user") {
-          return (
-            <p key={i} className="bmb-answer" style={{ margin: "0 0 12px", fontWeight: 600 }}>{m.content}</p>
-          );
-        }
-        const cited = (m.bandIds || []).map((id) => bands.find((b) => b.id === id)).filter(Boolean);
-        return (
-          <div key={i} style={{ margin: "0 0 18px" }} aria-live="polite">
-            <p className="bmb-answer">{m.content}</p>
-            {m.caveat && <div className="bmb-caveat">{m.caveat}</div>}
-            {cited.length > 0 && (
-              <div style={{ marginTop: 16 }}>
-                <div className="bmb-eyebrow" style={{ marginBottom: 9 }}>
-                  {cited.length === 1 ? "The band it read" : "The bands it read"}
-                </div>
-                {cited.map((band) => {
-                  const a = assess(band);
-                  return (
-                    <button key={band.id}
-                      className={"bmb-card" + (a.tier === "flagged" ? " bmb-card--flagged" : "")}
-                      onClick={() => onOpenBand(band.id)}>
-                      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "baseline" }}>
-                        <h2 className="bmb-h2" style={{ fontSize: 18 }}>{band.name}</h2>
-                        <span style={{ fontFamily: FONT_DATA, fontSize: 13, whiteSpace: "nowrap" }}>
-                          {inr(band.price.performance)}
-                        </span>
-                      </div>
-                      <div className="bmb-meta" style={{ margin: "4px 0 9px" }}>{band.kind}</div>
-                      <Signal a={a} compact />
-                    </button>
-                  );
-                })}
-              </div>
-            )}
-            {i === messages.length - 1 && !m.live && (
-              <div className="bmb-demo" style={{ marginTop: 12 }}>
-                Running without a model key: retrieval is real, and this reply was composed from the
-                facts it returned rather than written by an LLM. The deployed demo stays up either way —
-                a portfolio link should not go dark when a key expires.
-              </div>
-            )}
-          </div>
-        );
-      })}
+      <button className="bmb-btn" onClick={() => fresh(q)} disabled={busy || !q.trim()}
+        style={busy || !q.trim() ? { opacity: 0.55, cursor: "not-allowed" } : undefined}>
+        {busy ? "Reading the reviews…" : "Ask"}
+      </button>
 
       {busy && (
-        <div className="bmb-dots" style={{ margin: "4px 0 14px" }} aria-live="polite">
+        <div className="bmb-dots" style={{ marginTop: 14 }} aria-live="polite">
           <span /><span /><span />
         </div>
       )}
 
       {err && <p className="bmb-error">{err}</p>}
 
-      <textarea
-        ref={inputRef}
-        className="bmb-ask-in"
-        value={q}
-        placeholder={messages.length
-          ? "Ask a follow-up, or narrow it further…"
-          : "Describe what you need — a style, a city, a budget, or just what you are worried about."}
-        onChange={(e) => setQ(e.target.value)}
-        onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) send(); }}
-      />
+      {res?.clarify && (
+        <div style={{ marginTop: 18 }} aria-live="polite">
+          <p className="bmb-answer" style={{ marginBottom: 12 }}>{res.clarify.question}</p>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 7 }}>
+            {res.clarify.options.map((opt) => (
+              <button key={opt} className="bmb-chip" disabled={busy}
+                onClick={() => answerClarify(res.clarify.key, opt)}>{opt}</button>
+            ))}
+          </div>
+          <p className="bmb-note" style={{ marginTop: 12 }}>
+            One answer is usually enough to get to real results.
+          </p>
+        </div>
+      )}
 
-      <button className="bmb-btn" style={{ marginTop: 11 }} onClick={() => send()} disabled={busy || !q.trim()}>
-        {busy ? "Reading the reviews…" : messages.length ? "Send" : "Ask"}
-      </button>
+      {res && !res.clarify && (
+        <div style={{ marginTop: 16 }} aria-live="polite">
+          <p className="bmb-answer">{res.answer}</p>
 
-      <p className="bmb-note" style={{ marginTop: 12 }}>
-        Answered only from the {bands.length} bands and their reviews in this demo — it cannot
-        reach anything else, and it will say so rather than guess.
-      </p>
+          {res.caveat && <div className="bmb-caveat">{res.caveat}</div>}
+
+          {cited.length > 0 && (
+            <div style={{ marginTop: 16 }}>
+              <div className="bmb-eyebrow" style={{ marginBottom: 9 }}>
+                {cited.length === 1 ? "The band it read" : "The bands it read"}
+              </div>
+              {cited.map((band) => {
+                const a = assess(band);
+                return (
+                  <button key={band.id}
+                    className={"bmb-card" + (a.tier === "flagged" ? " bmb-card--flagged" : "")}
+                    onClick={() => onOpenBand(band.id)}>
+                    <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "baseline" }}>
+                      <h2 className="bmb-h2" style={{ fontSize: 18 }}>{band.name}</h2>
+                      <span style={{ fontFamily: FONT_DATA, fontSize: 13, whiteSpace: "nowrap" }}>
+                        {inr(band.price.performance)}
+                      </span>
+                    </div>
+                    <div className="bmb-meta" style={{ margin: "4px 0 9px" }}>{band.kind}</div>
+                    <Signal a={a} compact />
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          <p className="bmb-note" style={{ marginTop: 12 }}>
+            Answered only from the {SEED.length} bands and their reviews in this demo — it cannot
+            reach anything else, and it will say so rather than guess.
+          </p>
+
+          {!ASK_IS_LIVE && (
+            <div className="bmb-demo">
+              No answer endpoint configured, so this reply is composed locally from the same retrieved
+              facts rather than by a model. Set VITE_ASK_ENDPOINT to route questions through Claude.
+            </div>
+          )}
+        </div>
+      )}
     </div>
   );
 }
 
 /* ---------- screens ---------- */
 
-function Search({ bands, date, setDate, city, setCity, onSearch, onOpenBand }) {
+const CITIES = ["All cities", "Delhi NCR", "Jaipur", "Mumbai", "Chandigarh", "Lucknow"];
+
+function Search({ date, setDate, city, setCity, onSearch, onOpenBand }) {
   const [asking, setAsking] = useState(false);
-  const cities = useMemo(
-    () => ["All cities", ...[...new Set(bands.map((b) => b.city))].sort((a, b) => a.localeCompare(b))],
-    [bands]
-  );
 
   return (
     <div className="bmb-rise">
@@ -608,7 +705,7 @@ function Search({ bands, date, setDate, city, setCity, onSearch, onOpenBand }) {
       </p>
 
       {asking ? (
-        <Ask bands={bands} onOpenBand={onOpenBand} onClose={() => setAsking(false)} />
+        <Ask date={date} onOpenBand={onOpenBand} onClose={() => setAsking(false)} />
       ) : (
         <button className="bmb-ask-open" onClick={() => setAsking(true)}>
           <Spark size={19} />
@@ -623,7 +720,7 @@ function Search({ bands, date, setDate, city, setCity, onSearch, onOpenBand }) {
       <div style={{ marginBottom: 24 }}>
         <label className="bmb-label" htmlFor="bmb-city">Where</label>
         <select id="bmb-city" className="bmb-select" value={city} onChange={(e) => setCity(e.target.value)}>
-          {cities.map((c) => <option key={c} value={c}>{c}</option>)}
+          {CITIES.map((c) => <option key={c} value={c}>{c}</option>)}
         </select>
       </div>
       <button className="bmb-btn" onClick={onSearch}>Show bands</button>
@@ -631,18 +728,18 @@ function Search({ bands, date, setDate, city, setCity, onSearch, onOpenBand }) {
   );
 }
 
-function Results({ bands, date, city, onOpen, onBack }) {
+function Results({ date, city, onOpen, onBack }) {
   const [hideBooked, setHideBooked] = useState(true);
 
   const list = useMemo(() => {
-    let l = bands.filter((b) => city === "All cities" || b.city === city);
+    let l = SEED.filter((b) => city === "All cities" || b.city === city);
     l = l.map((b) => ({ band: b, a: assess(b), free: isFree(b, date) }));
     if (hideBooked) l = l.filter((x) => x.free);
     const order = { flagged: 3, limited: 2, mixed: 1, consistent: 0 };
     return l.sort((x, y) => order[x.a.tier] - order[y.a.tier] || x.band.price.performance - y.band.price.performance);
-  }, [bands, city, date, hideBooked]);
+  }, [city, date, hideBooked]);
 
-  const bookedCount = bands.filter((b) => (city === "All cities" || b.city === city) && !isFree(b, date)).length;
+  const bookedCount = SEED.filter((b) => (city === "All cities" || b.city === city) && !isFree(b, date)).length;
 
   return (
     <div className="bmb-rise">
@@ -689,12 +786,11 @@ function Results({ bands, date, city, onOpen, onBack }) {
   );
 }
 
-function Band({ band, date, onBack, onBook }) {
+function Band({ band, date, onBack, user, enquiries, onEnquire, onNeedAuth }) {
   const a = assess(band);
   const [tab, setTab] = useState("signal");
   const free = isFree(band, date);
-  const [sent, setSent] = useState(false);
-  const [booking, setBooking] = useState(false);
+  const sent = (enquiries || []).some((e) => e.band_id === band.id && e.event_date === date);
 
   const evidence = [...a.flags, ...a.negative.filter((r) => !r.flag), ...a.specific];
 
@@ -818,7 +914,7 @@ function Band({ band, date, onBack, onBook }) {
       <div style={{ marginTop: 26 }}>
         {sent ? (
           <div className="bmb-panel" style={{ marginBottom: 0 }}>
-            <div style={{ fontFamily: FONT_DISPLAY, fontSize: 18 }}>Booking request sent for {prettyDate(date)}</div>
+            <div style={{ fontFamily: FONT_DISPLAY, fontSize: 18 }}>Enquiry sent for {prettyDate(date)}</div>
             <p className="bmb-note" style={{ margin: "6px 0 0" }}>
               {band.name} has your name, your number and the price breakdown you saw. Nothing is paid and nothing is held yet.
             </p>
@@ -826,74 +922,191 @@ function Band({ band, date, onBack, onBook }) {
         ) : (
           <>
             <button className={"bmb-btn" + (free ? "" : " bmb-btn--ghost")} disabled={!free}
-              onClick={() => setBooking(true)}
+              onClick={() => (user ? onEnquire(band.id) : onNeedAuth(band.id))}
               style={!free ? { cursor: "not-allowed", opacity: 0.55 } : undefined}>
-              {free ? `Book for ${prettyDate(date)}` : "Not free on this date"}
+              {free ? `Enquire about ${prettyDate(date)}` : "Not free on this date"}
             </button>
             {free && (
               <p className="bmb-note" style={{ margin: "10px 0 0", textAlign: "center" }}>
-                Takes a name and a mobile number. No account needed.
+                {user
+                  ? `Sending as ${user.name}, +91 ${user.phone}`
+                  : "Takes a mobile number and a one-time code. No account needed to browse."}
               </p>
             )}
           </>
         )}
       </div>
+    </div>
+  );
+}
 
-      {booking && (
-        <BookingDialog band={band} date={date} onClose={() => setBooking(false)}
-          onSent={() => { setBooking(false); setSent(true); onBook?.(band.id); }} />
+function Account({ user, enquiries, onBack, onOpen, onSignOut }) {
+  const ago = (iso) => {
+    const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86400000);
+    if (days <= 0) return "today";
+    if (days === 1) return "yesterday";
+    if (days < 14) return `${days} days ago`;
+    return `${Math.floor(days / 7)} weeks ago`;
+  };
+
+  return (
+    <div className="bmb-rise">
+      <button className="bmb-link" onClick={onBack} style={{ marginBottom: 14 }}>← Back to bands</button>
+      <div className="bmb-eyebrow">{user.phone ? `+91 ${user.phone}` : user.email}</div>
+      <h1 className="bmb-h1" style={{ fontSize: 25 }}>{user.name}</h1>
+
+      <div className="bmb-eyebrow" style={{ margin: "18px 0 10px" }}>Your enquiries</div>
+      {enquiries.length === 0 ? (
+        <div className="bmb-panel">
+          <p className="bmb-note" style={{ margin: 0 }}>
+            Nothing sent yet. Enquiries you send will sit here with the date and the total you were quoted at the
+            time, so you have a record if a price changes later.
+          </p>
+        </div>
+      ) : (
+        enquiries.map((e) => {
+          const b = SEED.find((x) => x.id === e.band_id);
+          return (
+            <button key={e.id} className="bmb-card" onClick={() => onOpen(e.band_id)}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "baseline" }}>
+                <h2 className="bmb-h2">{b ? b.name : e.band_id}</h2>
+                <span className="bmb-meta">{ago(e.created_at)}</span>
+              </div>
+              <div className="bmb-meta" style={{ marginTop: 5 }}>
+                Enquired for {prettyDate(e.event_date)}
+                {e.quoted_total ? ` · quoted ${inr(e.quoted_total)}` : ""}
+              </div>
+            </button>
+          );
+        })
       )}
+
+      <div style={{ marginTop: 24 }}>
+        <button className="bmb-btn bmb-btn--ghost" onClick={onSignOut}>Sign out</button>
+      </div>
     </div>
   );
 }
 
 /* ---------- app ---------- */
 
-export default function BookMyBand({ bands, catalogLive }) {
+export default function BookMyBand() {
   const [screen, setScreen] = useState("boot");
   const [date, setDate] = useState("2026-11-21");
   const [city, setCity] = useState("Delhi NCR");
   const [openId, setOpenId] = useState(null);
 
-  const band = bands.find((b) => b.id === openId);
+  const [session, setSession] = useState(null);   // { userId, email }
+  const [profile, setProfile] = useState(null);   // { name, phone }
+  const [enquiries, setEnquiries] = useState([]);
+  const [needPhone, setNeedPhone] = useState(false);
+  const [auth, setAuth] = useState(null);         // null | { reason, pendingBandId }
+  const pending = useRef(null);
+
+  const band = SEED.find((b) => b.id === openId);
+  const user = session && profile ? { ...profile, email: session.email } : null;
+
+  /* Pick up an OAuth or email-link return, then load whatever session exists. */
+  useEffect(() => {
+    let live = true;
+    (async () => {
+      const s = (await consumeRedirect()) || (await getSession());
+      if (!live || !s) return;
+      setSession(s);
+      const [p, es] = await Promise.all([getProfile(s.userId), listEnquiries(s.userId)]);
+      if (!live) return;
+      setEnquiries(es || []);
+      if (p) setProfile(p); else setNeedPhone(true);
+    })();
+    return () => { live = false; };
+  }, []);
+
+  const loadAfterSignIn = async () => {
+    const s = await getSession();
+    if (!s) return;
+    setSession(s);
+    const [p, es] = await Promise.all([getProfile(s.userId), listEnquiries(s.userId)]);
+    setEnquiries(es || []);
+    if (p) { setProfile(p); await flushPending(s.userId); }
+    else setNeedPhone(true);
+  };
+
+  const quotedTotal = (b) =>
+    b.price.performance +
+    (typeof b.price.sound === "number" ? b.price.sound : 0) +
+    (typeof b.price.travelCity === "number" ? b.price.travelCity : 0);
+
+  const send = async (userId, bandId) => {
+    const b = SEED.find((x) => x.id === bandId);
+    const row = await createEnquiry(userId, { bandId, date, quotedTotal: quotedTotal(b) });
+    setEnquiries((prev) => [row, ...prev.filter((e) => e.id !== row.id)]);
+  };
+
+  const flushPending = async (userId) => {
+    const bandId = pending.current;
+    pending.current = null;
+    if (bandId) await send(userId, bandId);
+  };
+
+  const onSignedIn = () => { setAuth(null); loadAfterSignIn(); };
+
+  const doSignOut = async () => {
+    await signOut();
+    setSession(null); setProfile(null); setEnquiries([]); setScreen("search");
+  };
 
   return (
     <div className="bmb">
       <style>{CSS}</style>
-      {screen === "boot" && <Boot onDone={() => setScreen("welcome")} />}
-      {screen === "welcome" && (
-        <Welcome bands={bands} onStart={() => setScreen("search")} onLogin={() => setScreen("search")} />
-      )}
-      {screen !== "boot" && screen !== "welcome" && (
+      {screen === "boot" && <Boot onDone={() => setScreen("search")} />}
+      {screen !== "boot" && (
         <div className="bmb-wrap">
           <div className="bmb-topbar">
             <button className="bmb-logo" onClick={() => setScreen("search")}
               style={{ background: "none", border: "none", padding: 0, cursor: "pointer", color: "inherit" }}>
               Book<em>My</em>Band
             </button>
+            {user ? (
+              <button className="bmb-avatar" onClick={() => setScreen("account")}
+                title={`${user.name} — your account`} aria-label={`${user.name}, your account`}>
+                {user.name.charAt(0).toUpperCase()}
+              </button>
+            ) : (
+              <button className="bmb-link" onClick={() => setAuth({ reason: null })}>Sign in</button>
+            )}
           </div>
-          {!catalogLive && (
-            <div className="bmb-demo" style={{ marginTop: 14 }}>
-              No Supabase project configured yet, so the catalogue below is the same hand-authored seed
-              set the demo has always run on. Set SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY to read the
-              real thing.
-            </div>
-          )}
           <div style={{ paddingTop: 22 }}>
             {screen === "search" && (
-              <Search bands={bands} date={date} setDate={setDate} city={city} setCity={setCity}
+              <Search date={date} setDate={setDate} city={city} setCity={setCity}
                 onSearch={() => setScreen("results")}
                 onOpenBand={(id) => { setOpenId(id); setScreen("band"); }} />
             )}
             {screen === "results" && (
-              <Results bands={bands} date={date} city={city} onBack={() => setScreen("search")}
+              <Results date={date} city={city} onBack={() => setScreen("search")}
                 onOpen={(id) => { setOpenId(id); setScreen("band"); }} />
             )}
             {screen === "band" && band && (
-              <Band band={band} date={date} onBack={() => setScreen("results")} />
+              <Band band={band} date={date} user={user} enquiries={enquiries}
+                onBack={() => setScreen("results")}
+                onEnquire={(id) => send(session.userId, id)}
+                onNeedAuth={(id) => {
+                  pending.current = id;
+                  setAuth({ reason: `${band.name} needs a way to reply about ${prettyDate(date)}.` });
+                }} />
+            )}
+            {screen === "account" && user && (
+              <Account user={user} enquiries={enquiries} onBack={() => setScreen("results")}
+                onOpen={(id) => { setOpenId(id); setScreen("band"); }}
+                onSignOut={doSignOut} />
             )}
           </div>
         </div>
+      )}
+      {auth && <Auth reason={auth.reason} onClose={() => { pending.current = null; setAuth(null); }} onSignedIn={onSignedIn} />}
+      {needPhone && session && (
+        <PhoneStep session={session}
+          onSaved={async (p) => { setProfile(p); setNeedPhone(false); await flushPending(session.userId); }}
+          onSkip={() => { pending.current = null; setNeedPhone(false); }} />
       )}
     </div>
   );
