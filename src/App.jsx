@@ -5,7 +5,7 @@ import {
 } from "./lib/backend";
 import { Piece, CUES, AUTHORED_TOTAL, FIELDS } from "./components/BootLogo.jsx";
 import { SEED, GATE, assess as assessBand } from "./lib/seed.js";
-import { ask, ASK_IS_LIVE } from "./lib/ask.js";
+import { ask } from "./lib/ask.js";
 
 /* ============================================================
    BookMyBand — working demo, no model in the loop.
@@ -692,16 +692,14 @@ function Ask({ date, onOpenBand, onClose }) {
             reach anything else, and it will say so rather than guess.
           </p>
 
-          {/* Gated on THIS answer's live flag, not on whether an endpoint exists.
-              With an endpoint configured, the exhausted-clarification path still
-              composes locally and returns live:false — that used to render with no
-              notice at all, which is the one thing this feature must never do.
-              Falsy rather than === false, so an unset flag errs toward disclosure. */}
+          {/* Still gated on the answer's own flag rather than on a build-time
+              constant. Every answer is composed locally now, so this always
+              renders — but the gate stays honest if a live path ever returns. */}
           {!res.live && (
             <div className="bmb-demo">
-              {ASK_IS_LIVE
-                ? "This reply was composed locally from the retrieved facts, not by a model — your question could not be narrowed enough to send. Replies that did reach the model do not carry this notice."
-                : "No answer endpoint configured, so this reply is composed locally from the same retrieved facts rather than by a model. Set VITE_ASK_ENDPOINT to route questions through Claude."}
+              Composed locally from the retrieved facts above, not by a model. This app makes no
+              model calls at all — the abstention rules are enforced in code, so a flagged band is
+              reported every time and thin evidence is never rounded up to a recommendation.
             </div>
           )}
         </div>

@@ -1,26 +1,19 @@
-# Netlify build + function config.
+# Netlify build config for the Vite app.
 #
-# Restored alongside netlify/functions/ask.js: reverting the TanStack Start
-# migration removed this file with the rest of that branch, leaving the build
-# implicit. Vite here emits to dist/, not the dist/client the Start plugin
-# produced, so this needs to be committed rather than inferred.
-#
-# Secrets do NOT go here — this file is committed. Set ANTHROPIC_API_KEY
-# under Site configuration → Environment variables, where it stays out of the
-# repo and out of the client bundle. Point the app at the function with
-# VITE_ASK_ENDPOINT=/.netlify/functions/ask in the same place.
+# There are no functions here and no secrets to set. The Ask feature
+# answers from a deterministic local composer over the retrieved seed
+# facts — no model call, no API key, nothing that bills. Deploying this
+# site cannot incur a charge.
 
 [build]
   command = "npm run build"
   publish = "dist"
-  functions = "netlify/functions"
 
 [build.environment]
-  # The function uses Response.json() and ESM import.
   NODE_VERSION = "20"
 
-# Single-page app: serve index.html for anything that is not a real file
-# or a function, so a deep link does not 404.
+# Single-page app: serve index.html for anything that is not a real file,
+# so a deep link does not 404.
 [[redirects]]
   from = "/*"
   to = "/index.html"

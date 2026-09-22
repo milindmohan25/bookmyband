@@ -1,22 +1,18 @@
 /* ============================================================
    ask.js — the generation half of the ask feature.
 
-   Two implementations behind one call, the same shape as backend.js:
-   if VITE_ASK_ENDPOINT is set, the question goes to a small server
-   function that holds the Anthropic key and runs the retrieval and
-   the model call; if it is not, a deterministic local answerer reads
-   the same retrieved facts and says only what they support.
+   One implementation, deliberately: a deterministic local answerer
+   reads the retrieved facts and says only what they support. There is
+   no model call and no API key anywhere in this project, so running or
+   deploying it cannot bill anyone.
 
-   The key is never in this file and never in the bundle. A static
-   site cannot hold a secret, so the live path is a fetch to a
-   function, not an API call from the browser.
+   That is a product decision, not a missing feature. The abstention
+   rules the tier table promises — a flagged band reported every time,
+   "Limited info" never softened — are enforced here in code rather
+   than asked of a model in a prompt, which is the stricter of the two.
    ============================================================ */
 
 import { retrieve } from "./retrieve.js";
-
-const ENDPOINT = (typeof import.meta !== "undefined" && import.meta.env?.VITE_ASK_ENDPOINT) || "";
-
-export const ASK_IS_LIVE = Boolean(ENDPOINT);
 
 const inr = (n) => "₹" + n.toLocaleString("en-IN");
 
@@ -137,7 +133,7 @@ function nextClarify(intent, asked) {
 
 /* ---------- public API ---------- */
 
-export async function ask(query, { date = null, facets = [], asked = [], signal } = {}) {
+export async function ask(query, { date = null, facets = [], asked = [] } = {}) {
   // Answers to earlier questions are folded back into the query, so
   // retrieval reads one enriched sentence rather than a special case.
   const full = [query, ...facets.filter((f) => !NON_CONSTRAINING.has(f))].join(", ");
@@ -161,30 +157,6 @@ export async function ask(query, { date = null, facets = [], asked = [], signal 
     };
   }
 
-  if (!ASK_IS_LIVE) {
-    await new Promise((res) => setTimeout(res, 260));
-    return { ...localAnswer(query, r, date), live: false, hits: r.hits, intent: r.intent };
-  }
-
-  // The server re-runs retrieval from its own copy of the seed data,
-  // so a hand-crafted request cannot feed the model invented context.
-  const res = await fetch(ENDPOINT, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ query: full, date }),
-    signal,
-  });
-  if (!res.ok) {
-    const detail = await res.text().catch(() => "");
-    throw new Error(detail?.slice(0, 200) || `The answer service returned ${res.status}.`);
-  }
-  const data = await res.json();
-  return {
-    answer: data.answer || "",
-    bandIds: Array.isArray(data.bandIds) ? data.bandIds : [],
-    caveat: data.caveat || null,
-    live: true,
-    hits: r.hits,
-    intent: r.intent,
-  };
+  await new Promise((res) => setTimeout(res, 260));
+  return { ...localAnswer(query, r, date), live: false, hits: r.hits, intent: r.intent };
 }
