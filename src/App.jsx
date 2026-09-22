@@ -1023,6 +1023,7 @@ export default function BookMyBand() {
   const [needPhone, setNeedPhone] = useState(false);
   const [auth, setAuth] = useState(null);         // null | { reason, pendingBandId }
   const [sendErr, setSendErr] = useState("");
+  const [backendErr, setBackendErr] = useState("");
   const pending = useRef(null);
 
   const band = SEED.find((b) => b.id === openId);
@@ -1033,28 +1034,52 @@ export default function BookMyBand() {
     ? { ...(profile || {}), email: session.email, name: profile?.name || session.email?.split("@")[0] || "You" }
     : null;
 
+  /* Both load paths talk to Supabase, and both used to let a rejection
+     escape. A project that is configured but not working — schema.sql never
+     run, wrong anon key, free-tier project paused — threw here and
+     disappeared as an unhandled rejection, leaving the user half signed in
+     with an empty account screen and nothing explaining why. Report it
+     instead: the thrown message carries Supabase's own text. */
+  const loadUser = async (userId) => {
+    try {
+      const [p, es] = await Promise.all([getProfile(userId), listEnquiries(userId)]);
+      setBackendErr("");
+      return { profile: p, enquiries: es || [] };
+    } catch (err) {
+      setBackendErr(err.message || "The backend did not respond.");
+      return null;
+    }
+  };
+
   /* Pick up an OAuth or email-link return, then load whatever session exists. */
   useEffect(() => {
     let live = true;
     (async () => {
-      const s = (await consumeRedirect()) || (await getSession());
+      let s = null;
+      try {
+        s = (await consumeRedirect()) || (await getSession());
+      } catch (err) {
+        if (live) setBackendErr(err.message || "The backend did not respond.");
+        return;
+      }
       if (!live || !s) return;
       setSession(s);
-      const [p, es] = await Promise.all([getProfile(s.userId), listEnquiries(s.userId)]);
-      if (!live) return;
-      setEnquiries(es || []);
-      if (p) setProfile(p); else setNeedPhone(true);
+      const loaded = await loadUser(s.userId);
+      if (!live || !loaded) return;
+      setEnquiries(loaded.enquiries);
+      if (loaded.profile) setProfile(loaded.profile); else setNeedPhone(true);
     })();
     return () => { live = false; };
   }, []);
 
   const loadAfterSignIn = async () => {
-    const s = await getSession();
+    const s = await getSession().catch(() => null);
     if (!s) return;
     setSession(s);
-    const [p, es] = await Promise.all([getProfile(s.userId), listEnquiries(s.userId)]);
-    setEnquiries(es || []);
-    if (p) { setProfile(p); await flushPending(s.userId); }
+    const loaded = await loadUser(s.userId);
+    if (!loaded) return;
+    setEnquiries(loaded.enquiries);
+    if (loaded.profile) { setProfile(loaded.profile); await flushPending(s.userId); }
     else setNeedPhone(true);
   };
 
@@ -1111,6 +1136,17 @@ export default function BookMyBand() {
               <button className="bmb-link" onClick={() => setAuth({ reason: null })}>Sign in</button>
             )}
           </div>
+          {backendErr && (
+            <div className="bmb-caveat" style={{ marginTop: 16 }} role="alert">
+              <strong>Supabase is configured but not answering.</strong> {backendErr}
+              <div style={{ marginTop: 6 }}>
+                Usually one of: <code>supabase/schema.sql</code> has not been run against the project,
+                the anon key is wrong, the free-tier project has paused after 7 days idle, or this
+                origin is missing from Authentication → URL Configuration. Clear{" "}
+                <code>VITE_SUPABASE_URL</code> to fall back to the in-memory store.
+              </div>
+            </div>
+          )}
           <div style={{ paddingTop: 22 }}>
             {screen === "search" && (
               <Search date={date} setDate={setDate} city={city} setCity={setCity}
