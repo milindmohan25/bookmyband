@@ -294,6 +294,7 @@ function Signal({ a, compact }) {
 
 const BOOT_DESIGN = { w: 400, h: 711 };  // 9:16 at the width the piece is drawn 1:1
 const BOOT_SPEED = 1.7;                  // the authored timeline is ~8s; a splash should not be
+const REDUCED_HOLD_MS = 1400;            // how long the still frame is held when motion is reduced
 
 function Boot({ onDone }) {
   const [T, setT] = useState(0);
@@ -313,7 +314,17 @@ function Boot({ onDone }) {
   useEffect(() => {
     const reduce = typeof window !== "undefined" && window.matchMedia &&
       window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-    if (reduce) { finish(); return; }
+    if (reduce) {
+      /* Reduced motion means no motion — not no splash. Calling finish()
+         here skipped straight to the app, so anyone with the OS setting
+         on never saw the piece at all and had no way to tell it from a
+         broken boot screen. Hold the settled frame instead: the mandap,
+         garland, shehnai and wordmark exactly as they come to rest, with
+         nothing animating, then hand over. */
+      setT(CUES.Reset);
+      const id = setTimeout(finish, REDUCED_HOLD_MS);
+      return () => clearTimeout(id);
+    }
     const t0 = performance.now();
     let raf;
     const tick = (now) => {
