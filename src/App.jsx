@@ -681,10 +681,16 @@ function Ask({ date, onOpenBand, onClose }) {
             reach anything else, and it will say so rather than guess.
           </p>
 
-          {!ASK_IS_LIVE && (
+          {/* Gated on THIS answer's live flag, not on whether an endpoint exists.
+              With an endpoint configured, the exhausted-clarification path still
+              composes locally and returns live:false — that used to render with no
+              notice at all, which is the one thing this feature must never do.
+              Falsy rather than === false, so an unset flag errs toward disclosure. */}
+          {!res.live && (
             <div className="bmb-demo">
-              No answer endpoint configured, so this reply is composed locally from the same retrieved
-              facts rather than by a model. Set VITE_ASK_ENDPOINT to route questions through Claude.
+              {ASK_IS_LIVE
+                ? "This reply was composed locally from the retrieved facts, not by a model — your question could not be narrowed enough to send. Replies that did reach the model do not carry this notice."
+                : "No answer endpoint configured, so this reply is composed locally from the same retrieved facts rather than by a model. Set VITE_ASK_ENDPOINT to route questions through Claude."}
             </div>
           )}
         </div>

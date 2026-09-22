@@ -146,7 +146,7 @@ export async function ask(query, { date = null, facets = [], asked = [], signal 
   if (!r.grounded) {
     const c = nextClarify(r.intent, asked);
     if (c && asked.length < 2) {
-      return { clarify: c, live: ASK_IS_LIVE, hits: [], intent: r.intent, query, facets, asked };
+      return { clarify: c, live: false, hits: [], intent: r.intent, query, facets, asked };
     }
     // Out of questions: show the best-evidenced bands rather than
     // sending the user away with nothing.
