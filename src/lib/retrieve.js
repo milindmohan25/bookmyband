@@ -29,7 +29,10 @@ const terms = (s) => words(s).filter((w) => w.length > 2 && !STOP.has(w));
    interpreted rather than silently guessing. */
 
 const CITY_WORDS = {
-  "delhi ncr": ["delhi", "ncr", "gurgaon", "noida", "gurugram"],
+  /* Keys are compared with === against band.city, so they must match the
+     seed spelling exactly. "delhi ncr" silently scored every Delhi band
+     as out-of-city. */
+  "Delhi NCR": ["delhi", "ncr", "gurgaon", "noida", "gurugram"],
   Jaipur: ["jaipur", "rajasthan"],
   Mumbai: ["mumbai", "bombay"],
   Chandigarh: ["chandigarh", "punjab", "mohali"],

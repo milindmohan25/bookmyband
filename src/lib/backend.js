@@ -49,7 +49,11 @@ async function api(path, { method = "GET", body, auth = true, prefer } = {}) {
     method, headers, body: body ? JSON.stringify(body) : undefined,
   });
   const text = await res.text();
-  const data = text ? JSON.parse(text) : null;
+  /* Parse defensively. A paused project, a proxy or a gateway answers with
+     HTML, and parsing that before checking res.ok surfaced a SyntaxError
+     instead of the status that actually explains the failure. */
+  let data = null;
+  if (text) { try { data = JSON.parse(text); } catch { /* not JSON: fall through to the status */ } }
   if (!res.ok) throw new Error(data?.msg || data?.message || data?.error_description || `Request failed (${res.status})`);
   return data;
 }
@@ -101,11 +105,21 @@ export function signInWithGoogle() {
 /* Passwordless email. Free, but Supabase's built-in SMTP is rate
    limited hard — wire up custom SMTP before anyone else uses this. */
 export async function sendEmailLink(email) {
-  if (!IS_LIVE) { await wait(); return { mocked: true }; }
-  const redirect = window.location.origin + window.location.pathname;
-  await api("/auth/v1/otp", {
+  if (!IS_LIVE) {
+    await wait();
+    /* Sign in for real in the keyless demo, the same as signInWithGoogle.
+       Returning { mocked: true } without a session left the caller thinking
+       it had signed in while getSession() still answered null. */
+    mock.session = { userId: "mock-email-user", email };
+    return { mocked: true };
+  }
+  /* GoTrue reads the return address from the redirect_to QUERY parameter.
+     options.email_redirect_to is the supabase-js shape; this raw REST call
+     ignores it, and the link lands on the project Site URL instead. */
+  const redirect = encodeURIComponent(window.location.origin + window.location.pathname);
+  await api(`/auth/v1/otp?redirect_to=${redirect}`, {
     method: "POST", auth: false,
-    body: { email, create_user: true, options: { email_redirect_to: redirect } },
+    body: { email, create_user: true },
   });
   return { sent: true };
 }
@@ -162,14 +176,33 @@ export async function createEnquiry(userId, { bandId, date, quotedTotal }) {
   const row = { user_id: userId, band_id: bandId, event_date: date, quoted_total: quotedTotal };
   if (!IS_LIVE) {
     await wait();
+    // Mirror the table's unique (user_id, band_id, event_date) constraint.
+    const dup = mock.enquiries.find(
+      (e) => e.user_id === userId && e.band_id === bandId && e.event_date === date,
+    );
+    if (dup) return dup;
     const e = { id: mock.nextId++, ...row, created_at: new Date().toISOString() };
     mock.enquiries.push(e);
     return e;
   }
-  const rows = await api("/rest/v1/enquiries", {
+  /* on_conflict names the unique (user_id, band_id, event_date) constraint.
+     Without it PostgREST infers the identity primary key, which a client
+     insert never supplies, so a double tap hit the unique index and failed
+     rather than being the idempotent no-op the schema promises.
+
+     ignore-duplicates rather than merge-duplicates: the schema deliberately
+     grants no UPDATE policy on enquiries, since a quoted_total that can be
+     rewritten afterwards defeats the point of recording it. DO NOTHING needs
+     no such policy — but it returns no row, so read the original back. */
+  const rows = await api("/rest/v1/enquiries?on_conflict=user_id,band_id,event_date", {
     method: "POST",
-    prefer: "return=representation,resolution=merge-duplicates",
+    prefer: "return=representation,resolution=ignore-duplicates",
     body: row,
   });
-  return rows?.[0];
+  if (rows?.[0]) return rows[0];
+  const existing = await api(
+    `/rest/v1/enquiries?user_id=eq.${userId}&band_id=eq.${encodeURIComponent(bandId)}` +
+    `&event_date=eq.${date}&select=*`,
+  );
+  return existing?.[0];
 }

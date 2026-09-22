@@ -13,7 +13,6 @@
    ============================================================ */
 
 import { retrieve } from "./retrieve.js";
-import { SEED } from "./seed.js";
 
 const ENDPOINT = (typeof import.meta !== "undefined" && import.meta.env?.VITE_ASK_ENDPOINT) || "";
 

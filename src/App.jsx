@@ -38,6 +38,11 @@ const FONT_BODY = '"Helvetica Neue", Helvetica, Arial, sans-serif';
 const FONT_DATA = 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace';
 
 const CSS = `
+/* Every other rule here is scoped under .bmb, so nothing was styling the
+   document itself and the browser default margin showed as a white gutter
+   around the paper background. */
+html, body { height: 100%; }
+body { margin: 0; background: ${C.paper}; }
 .bmb * { box-sizing: border-box; }
 .bmb {
   font-family: ${FONT_BODY};
@@ -739,13 +744,18 @@ function Results({ date, city, onOpen, onBack }) {
     return l.sort((x, y) => order[x.a.tier] - order[y.a.tier] || x.band.price.performance - y.band.price.performance);
   }, [city, date, hideBooked]);
 
-  const bookedCount = SEED.filter((b) => (city === "All cities" || b.city === city) && !isFree(b, date)).length;
+  /* Counted off the city list, not off `list`: once "hide booked" is
+     unticked `list` also holds the booked bands, and the heading claimed
+     they were free while the red "Booked on ..." rows said otherwise. */
+  const inCity = SEED.filter((b) => city === "All cities" || b.city === city);
+  const bookedCount = inCity.filter((b) => !isFree(b, date)).length;
+  const freeCount = inCity.length - bookedCount;
 
   return (
     <div className="bmb-rise">
       <button className="bmb-link" onClick={onBack} style={{ marginBottom: 14 }}>← Change date or city</button>
       <div className="bmb-eyebrow">{prettyDate(date)} · {city}</div>
-      <h1 className="bmb-h1" style={{ fontSize: 25 }}>{list.length} band{list.length === 1 ? "" : "s"} free on your date</h1>
+      <h1 className="bmb-h1" style={{ fontSize: 25 }}>{freeCount} band{freeCount === 1 ? "" : "s"} free on your date</h1>
       {bookedCount > 0 && (
         <label style={{ display: "flex", gap: 8, alignItems: "center", fontSize: 13, color: C.inkSoft, marginBottom: 20, cursor: "pointer" }}>
           <input type="checkbox" checked={hideBooked} onChange={(e) => setHideBooked(e.target.checked)} />
@@ -786,7 +796,7 @@ function Results({ date, city, onOpen, onBack }) {
   );
 }
 
-function Band({ band, date, onBack, user, enquiries, onEnquire, onNeedAuth }) {
+function Band({ band, date, onBack, user, enquiries, onEnquire, onNeedAuth, sendErr }) {
   const a = assess(band);
   const [tab, setTab] = useState("signal");
   const free = isFree(band, date);
@@ -929,8 +939,13 @@ function Band({ band, date, onBack, user, enquiries, onEnquire, onNeedAuth }) {
             {free && (
               <p className="bmb-note" style={{ margin: "10px 0 0", textAlign: "center" }}>
                 {user
-                  ? `Sending as ${user.name}, +91 ${user.phone}`
-                  : "Takes a mobile number and a one-time code. No account needed to browse."}
+                  ? `Sending as ${user.name}${user.phone ? `, +91 ${user.phone}` : ` · ${user.email}`}`
+                  : "Sign in with Google or an email link first. No account needed to browse."}
+              </p>
+            )}
+            {sendErr && (
+              <p className="bmb-note" style={{ margin: "10px 0 0", textAlign: "center", color: C.crimson }} role="alert">
+                {sendErr}
               </p>
             )}
           </>
@@ -1001,10 +1016,16 @@ export default function BookMyBand() {
   const [enquiries, setEnquiries] = useState([]);
   const [needPhone, setNeedPhone] = useState(false);
   const [auth, setAuth] = useState(null);         // null | { reason, pendingBandId }
+  const [sendErr, setSendErr] = useState("");
   const pending = useRef(null);
 
   const band = SEED.find((b) => b.id === openId);
-  const user = session && profile ? { ...profile, email: session.email } : null;
+  /* Gating this on `profile` as well meant anyone who skipped the phone
+     step was shown "Sign in" while already authenticated, could not open
+     Account, and was pushed back through the auth sheet on Enquire. */
+  const user = session
+    ? { ...(profile || {}), email: session.email, name: profile?.name || session.email?.split("@")[0] || "You" }
+    : null;
 
   /* Pick up an OAuth or email-link return, then load whatever session exists. */
   useEffect(() => {
@@ -1036,10 +1057,19 @@ export default function BookMyBand() {
     (typeof b.price.sound === "number" ? b.price.sound : 0) +
     (typeof b.price.travelCity === "number" ? b.price.travelCity : 0);
 
+  /* Callers fire this and drop the promise, so it must not reject: a paused
+     project or an offline tab used to surface as an unhandled rejection with
+     nothing on screen, and an empty response then threw on row.id. */
   const send = async (userId, bandId) => {
     const b = SEED.find((x) => x.id === bandId);
-    const row = await createEnquiry(userId, { bandId, date, quotedTotal: quotedTotal(b) });
-    setEnquiries((prev) => [row, ...prev.filter((e) => e.id !== row.id)]);
+    setSendErr("");
+    try {
+      const row = await createEnquiry(userId, { bandId, date, quotedTotal: quotedTotal(b) });
+      if (!row) throw new Error("The enquiry was not saved. Try again in a moment.");
+      setEnquiries((prev) => [row, ...prev.filter((e) => e.id !== row.id)]);
+    } catch (err) {
+      setSendErr(err.message || "The enquiry could not be sent. Try again in a moment.");
+    }
   };
 
   const flushPending = async (userId) => {
@@ -1086,7 +1116,7 @@ export default function BookMyBand() {
                 onOpen={(id) => { setOpenId(id); setScreen("band"); }} />
             )}
             {screen === "band" && band && (
-              <Band band={band} date={date} user={user} enquiries={enquiries}
+              <Band band={band} date={date} user={user} enquiries={enquiries} sendErr={sendErr}
                 onBack={() => setScreen("results")}
                 onEnquire={(id) => send(session.userId, id)}
                 onNeedAuth={(id) => {
